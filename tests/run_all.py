@@ -15,6 +15,7 @@ VENV_PY = os.environ.get("MPLAYER_PYTHON") or os.path.join(BASE, ".venv", "Scrip
 LOGDIR = os.path.join(BASE, "test_logs")
 
 STAGES = [
+    ("p6_controls", "tests/test_p6_controls.py", 60),
     ("p0_decode", "tests/test_p0_decode.py", 150),
     ("p1a_open_play", "tests/test_p1a_open_play.py", 100),
     ("p1b_seek", "tests/test_p1b_seek.py", 100),
