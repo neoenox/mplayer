@@ -91,6 +91,9 @@ class PlayerWindow(QMainWindow):
         # リリースイベントの直下で呼ぶと Qt 6.12 の FFmpeg バックエンドで
         # 再入デッドロックを起こすことがある (検証で確認)。
         self.seek.sliderReleased.connect(self.seek_released)
+        self.seek.actionTriggered.connect(self.seek_action)
+        self.seek.setSingleStep(1000)
+        self.seek.setPageStep(10000)
         # 誤操作防止: ファイル未ロード時は無効
         self.seek.setEnabled(False)
 
@@ -198,7 +201,12 @@ class PlayerWindow(QMainWindow):
     @Slot()
     def stop(self) -> None:
         # 状態遷移はイベント処理の外で実行 (入力ディスパッチ内の再入デッドロック防止)。
-        QTimer.singleShot(0, self._do_stop)
+        gen = self._media_gen
+        QTimer.singleShot(0, lambda: self._apply_stop(gen))
+
+    def _apply_stop(self, gen: int) -> None:
+        if gen == self._media_gen:
+            self._do_stop()
 
     def _do_stop(self) -> None:
         # NOTE: QMediaPlayer.stop() は使わない。一時停止→再開の履歴がある状態で
@@ -221,6 +229,15 @@ class PlayerWindow(QMainWindow):
         # QTimer経由で遅延実行し、マウスイベント処理内での再入を避ける。
         # 世代を添えて、予約実行前にファイルが切り替わっていたら破棄する。
         gen, target = self._media_gen, self.seek.value()
+        QTimer.singleShot(0, lambda: self._apply_seek(gen, target))
+
+    @Slot(int)
+    def seek_action(self, action: int) -> None:
+        # actionTriggered precedes valueChanged; sliderPosition holds the new target.
+        # Mouse drags remain handled once on release.
+        if self.seek.isSliderDown():
+            return
+        gen, target = self._media_gen, self.seek.sliderPosition()
         QTimer.singleShot(0, lambda: self._apply_seek(gen, target))
 
     def _apply_seek(self, gen: int, target: int) -> None:
