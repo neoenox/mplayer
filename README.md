@@ -95,6 +95,16 @@ rem 直接実行・特定ステージ・詳細表示:
 - テスト中は音量0にするため音は出ません。製品の既定音量 (80) は変更しません
 - 詳細ログは `test_logs/` に保存されます
 
+## リリース / 変更履歴
+
+- バージョンは `main.py` の `__version__` と `CHANGELOG.md` で管理します
+- `v*` タグを push すると CI が exe をビルドし、zip を添付した GitHub Release を自動作成します
+
+```bat
+git tag v1.0.0
+git push origin v1.0.0
+```
+
 ## トラブルシュート
 
 - 映像が出ない: ` .venv\Lib\site-packages\PySide6\plugins\multimedia\ffmpegmediaplugin.dll` の有無を確認
