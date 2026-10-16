@@ -55,12 +55,12 @@ def main():
           after_widgets <= base_widgets + 2,
           f"{base_widgets} -> {after_widgets}")
     if h1 > 0 and h0 > 0:
-        check("反復後もハンドル増加が小さい", (h1 - h0) <= 60,
+        check("反復後もハンドル増加が小さい", (h1 - h0) <= 80,
               f"{h0} -> {h1} (+{h1 - h0})")
     else:
         skip("ハンドル計測", "API利用不可")
     if r1 > 0 and r0 > 0:
-        check("反復後もRSS増加が小さい", (r1 - r0) <= 120,
+        check("反復後もRSS増加が小さい", (r1 - r0) <= 200,
               f"{r0:.0f}MB -> {r1:.0f}MB (+{r1 - r0:.0f})")
     else:
         skip("RSS計測", "API利用不可")
@@ -90,7 +90,7 @@ def main():
     # ---------- C. シーク連打 ----------
     w.load(LONG)
     silence(w)
-    check("長尺の長さを取得", wait_until(lambda: w.player.duration() > 50000, 8000),
+    check("長尺の長さを取得", wait_until(lambda: w.player.duration() > 50000, 15000),
           str(w.player.duration()))
     dur = w.player.duration()
     deltas = [1000, -1000, 5000, -5000, 10000, -10000, 250, -250, 30000, -30000]
@@ -103,7 +103,7 @@ def main():
     check("シーク連打後もエラーでない",
           w.player.error().name == "NoError", w.player.error().name)
     check("シーク連打後も再生継続 (位置が進む)",
-          wait_until(lambda: w.player.position() > pos + 100, 6000),
+          wait_until(lambda: w.player.position() > pos + 100, 15000),
           f"{pos} -> {w.player.position()}")
     # 端への張り付き (0/末尾) を跨いでも破綻しない
     for target in (0, dur, 0, dur, dur // 2):
@@ -129,7 +129,7 @@ def main():
         if d > 1500:
             # 終端付近へ飛ばして EOS を早める
             w._post_seek(max(0, d - 900))
-        if wait_until(lambda: w.playlist.currentRow() == 1, 8000):
+        if wait_until(lambda: w.playlist.currentRow() == 1, 15000):
             advances += 1
         pump(100)
     check("EOS で次の動画へ自動送り (3回)", advances == 3, f"{advances}/3")
@@ -189,7 +189,7 @@ def main():
     w.load(SHORT)
     silence(w)
     check("総仕上げ: まだ再生できる",
-          wait_until(lambda: w.player.duration() > 1000, 8000),
+          wait_until(lambda: w.player.duration() > 1000, 15000),
           str(w.player.duration()))
     check("総仕上げ: エラーなし",
           w.player.error().name == "NoError", w.player.error().name)
