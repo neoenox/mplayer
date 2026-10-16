@@ -4,6 +4,15 @@
 形式は [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に準拠し、
 バージョンは [Semantic Versioning](https://semver.org/lang/ja/) に従います。
 
+## [1.10.0] - 2026-10-16
+
+### Added
+- 字幕の文字色 (白/黒/黄/水色/緑/ピンク) とフォント (既定/游ゴシック UI/メイリオ/
+  MS ゴシック/Segoe UI) を「字幕」メニューから選択。縁取り色は文字色の輝度から
+  自動で黒/白に切替 (黒文字なら白縁)
+- 文字色・フォントをセッションに保存し復元 (`subtitle_color` / `subtitle_font`)
+- テスト `tests/test_p21_subtitle_color.py`
+
 ## [1.9.0] - 2026-10-16
 
 ### Added
