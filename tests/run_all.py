@@ -32,6 +32,8 @@ STAGES = [
     ("p6_features", "tests/test_p6_features.py", 150),
     ("p7_resume", "tests/test_p7_resume.py", 150),
     ("p8_exe", "tests/test_p8_exe.py", 150),
+    ("p9_subtitle", "tests/test_p9_subtitle.py", 150),
+    ("p10_playlist", "tests/test_p10_playlist.py", 180),
 ]
 
 
