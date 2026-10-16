@@ -98,7 +98,7 @@ def collect_video_files(path: str, recursive: bool = True,
     return out
 
 APP_NAME = "シンプル動画プレイヤー"
-__version__ = "1.9.0"
+__version__ = "1.10.0"
 
 
 def _resource_path(rel: str) -> str:
@@ -203,12 +203,37 @@ def decode_subtitle_bytes(data: bytes, encoding: str = "auto") -> tuple[str, str
     return data.decode("utf-8", errors="replace"), "utf-8"
 
 
+# 字幕の配色とフォント。縁取り色は塗り色の輝度から自動で決める (黒地に黒を防ぐ)。
+SUB_COLORS = (
+    ("白", (255, 255, 255)),
+    ("黒", (0, 0, 0)),
+    ("黄", (255, 235, 59)),
+    ("水色", (79, 195, 247)),
+    ("緑", (124, 252, 0)),
+    ("ピンク", (255, 128, 171)),
+)
+SUB_FONTS = (
+    ("既定", ""),
+    ("游ゴシック UI", "Yu Gothic UI"),
+    ("メイリオ", "Meiryo"),
+    ("MS ゴシック", "MS Gothic"),
+    ("Segoe UI", "Segoe UI"),
+)
+
+
+def contrast_outline(rgb) -> tuple[int, int, int]:
+    """塗り色の輝度から縁取り色 (黒 or 白) を選ぶ。"""
+    r, g, b = (int(v) for v in rgb)
+    lum = 0.299 * r + 0.587 * g + 0.114 * b
+    return (0, 0, 0) if lum >= 128 else (255, 255, 255)
+
+
 class SubtitleLabel(QLabel):
     """縁取り(アウトライン)付きの字幕ラベル。
 
     Qt の QLabel は文字の縁取りができないため、QTextLayout で折返しを計算し、
-    QPainterPath で縁取り(太い線)と塗り(白)を重ねて描画する。
-    背景 (スタイルシートの background-color) は PE_Widget で描く。
+    QPainterPath で縁取り(太い線)と塗りを重ねて描画する。塗り色は設定でき、
+    縁取り色は塗り色の輝度から自動で黒/白を選ぶ。背景の半透明帯も自前で描く。
     """
 
     INSET_X = 10.0
@@ -220,6 +245,7 @@ class SubtitleLabel(QLabel):
         self._outline_width = 3.0
         self._outline_color = QColor(0, 0, 0)
         self._fill_color = QColor(255, 255, 255)
+        self._font_family = ""
         # 背景 (半透明の黒帯)。縁取りラベル側で描画する (QSS は使わない)。
         self._bg_color = QColor(0, 0, 0, 150)
 
@@ -231,6 +257,27 @@ class SubtitleLabel(QLabel):
 
     def outline(self) -> bool:
         return self._outline
+
+    def set_fill_color(self, rgb) -> None:
+        """文字色を設定し、縁取り色を輝度から自動選択する。"""
+        r, g, b = (int(v) for v in rgb)
+        self._fill_color = QColor(r, g, b)
+        self._outline_color = QColor(*contrast_outline((r, g, b)))
+        self.update()
+
+    def fill_color(self) -> QColor:
+        return QColor(self._fill_color)
+
+    def outline_color(self) -> QColor:
+        return QColor(self._outline_color)
+
+    def set_font_family(self, family: str) -> None:
+        """字幕フォントのファミリ名を設定する ("" はシステム既定)。"""
+        self._font_family = str(family or "")
+        self.update()
+
+    def font_family(self) -> str:
+        return self._font_family
 
     def paintEvent(self, event) -> None:
         p = QPainter(self)
@@ -310,7 +357,7 @@ MOUSE_HELP = [
 HELP_NOTES = [
     "フォルダをドロップすると、中の動画を名前順にまとめてプレイリストへ追加します (500件まで)。",
     "字幕の文字コードは自動判定します (「字幕」→「文字コード」で手動指定も可能)。",
-    "「字幕」メニューからサイズ・位置・縁取りを変更できます。",
+    "「字幕」メニューからサイズ・位置・縁取り・文字色・フォントを変更できます。",
     "終了時に音量・速度・プレイリスト・字幕設定を保存し、次回起動時に復元します。",
     "動画と同じフォルダに同名の .srt があれば、自動で読み込みます。",
 ]
@@ -395,6 +442,8 @@ class PlayerWindow(QMainWindow):
         self._sub_pos = "bottom"
         self._sub_outline = True
         self._sub_encoding = "auto"
+        self._sub_color = (255, 255, 255)
+        self._sub_font = ""
         # 映像の下端に配置 (addStretch で下寄せ)。背景は字幕行の高さのみ。
         self._overlay = QVBoxLayout(self.video)
         self._rebuild_overlay()
@@ -664,6 +713,28 @@ class PlayerWindow(QMainWindow):
             self._sub_enc_group.addAction(a)
             enc_menu.addAction(a)
 
+        color_menu = sub_menu.addMenu("文字色")
+        self._sub_color_group = QActionGroup(self)
+        for label, rgb in SUB_COLORS:
+            a = QAction(label, self)
+            a.setCheckable(True)
+            a.setData(list(rgb))
+            a.setChecked(tuple(rgb) == self._sub_color)
+            a.triggered.connect(lambda _=False, v=rgb: self.set_subtitle_color(v))
+            self._sub_color_group.addAction(a)
+            color_menu.addAction(a)
+
+        font_menu = sub_menu.addMenu("フォント")
+        self._sub_font_group = QActionGroup(self)
+        for label, family in SUB_FONTS:
+            a = QAction(label, self)
+            a.setCheckable(True)
+            a.setData(family)
+            a.setChecked(family == self._sub_font)
+            a.triggered.connect(lambda _=False, v=family: self.set_subtitle_font(v))
+            self._sub_font_group.addAction(a)
+            font_menu.addAction(a)
+
         help_menu = self.menuBar().addMenu("ヘルプ")
         self.help_act = QAction("ショートカット一覧", self)
         self.help_act.setShortcut(Qt.Key.Key_F1)
@@ -800,6 +871,8 @@ class PlayerWindow(QMainWindow):
             "subtitle_pos": self._sub_pos,
             "subtitle_outline": self._sub_outline,
             "subtitle_encoding": self._sub_encoding,
+            "subtitle_color": list(self._sub_color),
+            "subtitle_font": self._sub_font,
             "playlist": [self.playlist.item(i).data(Qt.ItemDataRole.UserRole)
                          for i in range(self.playlist.count())],
         }
@@ -846,6 +919,8 @@ class PlayerWindow(QMainWindow):
             paths = [p for p in pl if isinstance(p, str)]
             if paths:
                 self.add_to_playlist(paths)
+        self.set_subtitle_color(s.get("subtitle_color"))
+        self.set_subtitle_font(s.get("subtitle_font"))
 
     def restore_session(self) -> None:
         self._apply_session(self._load_session())
@@ -883,7 +958,11 @@ class PlayerWindow(QMainWindow):
             self._overlay.addWidget(self.subtitle_label)
         self.subtitle_label.setStyleSheet(
             "#subtitle_label { color: white;"
-            f" padding: 2px 10px; font-size: {self._sub_size}px; }}")
+            f" padding: 2px 10px; font-size: {self._sub_size}px;"
+            + (f' font-family: "{self._sub_font}";' if self._sub_font else "")
+            + " }")
+        # 文字色 (縁取り色は輝度から自動決定)。
+        self.subtitle_label.set_fill_color(self._sub_color)
         # 縁取り幅は文字サイズに追従させる (大きい文字ほど太く)。
         self.subtitle_label.set_outline(self._sub_outline,
                                         max(1.5, self._sub_size * 0.15))
@@ -905,6 +984,36 @@ class PlayerWindow(QMainWindow):
             act.setChecked(self._sub_outline)
         self.subtitle_label.set_outline(
             self._sub_outline, max(1.5, self._sub_size * 0.15))
+
+    def set_subtitle_color(self, rgb) -> None:
+        """字幕の文字色。既定 (白) 以外は縁取り色を自動で反転する。"""
+        try:
+            rgb = (int(rgb[0]), int(rgb[1]), int(rgb[2]))
+        except (TypeError, IndexError, ValueError):
+            return
+        if rgb not in [c for _, c in SUB_COLORS]:
+            return
+        self._sub_color = rgb
+        grp = getattr(self, "_sub_color_group", None)
+        if grp is not None:
+            for a in grp.actions():
+                if a.data() == list(rgb):
+                    a.setChecked(True)
+        self.subtitle_label.set_fill_color(rgb)
+
+    def set_subtitle_font(self, family: str) -> None:
+        """字幕フォントのファミリ。"" はシステム既定。"""
+        family = str(family or "")
+        if family not in [f for _, f in SUB_FONTS]:
+            return
+        self._sub_font = family
+        grp = getattr(self, "_sub_font_group", None)
+        if grp is not None:
+            for a in grp.actions():
+                if a.data() == family:
+                    a.setChecked(True)
+        self.subtitle_label.set_font_family(family)
+        self._rebuild_overlay()
 
     def set_subtitle_encoding(self, enc: str) -> None:
         """文字コード指定。auto 以外は再読込して反映する。"""
