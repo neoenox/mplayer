@@ -43,10 +43,16 @@ SUPPORTED_FILTER = (
 )
 
 APP_NAME = "シンプル動画プレイヤー"
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 # 前回再生位置の保存先 (アプリと同じフォルダ)。上限100件。
 RESUME_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "resume.json")
+# セッション (音量/ミュート/速度/プレイリスト) の保存先。
+# テスト時は MPLAYER_SESSION_FILE で隔離できる。
+SESSION_FILE = os.environ.get(
+    "MPLAYER_SESSION_FILE",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "session.json"),
+)
 RESUME_MAX_ENTRIES = 100
 RESUME_MIN_MS = 5000       # これより手前は記憶しない (先頭とみなす)
 RESUME_TAIL_MS = 10000     # 終端付近は記憶しない (視聴済みとみなす)
@@ -464,6 +470,57 @@ class PlayerWindow(QMainWindow):
         except Exception:
             pass
 
+    # ---------- セッション (音量/ミュート/速度/プレイリスト) ----------
+    @staticmethod
+    def _load_session() -> dict:
+        try:
+            with open(SESSION_FILE, encoding="utf-8") as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
+
+    def _save_session(self) -> None:
+        data = {
+            "volume": self.vol.value(),
+            "muted": self.mute_btn.isChecked(),
+            "rate": self._rates[self._rate_idx],
+            "playlist": [self.playlist.item(i).data(Qt.ItemDataRole.UserRole)
+                         for i in range(self.playlist.count())],
+        }
+        try:
+            with open(SESSION_FILE, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+    def _apply_session(self, s: dict) -> None:
+        if not isinstance(s, dict):
+            return
+        vol = s.get("volume")
+        if isinstance(vol, int) and 0 <= vol <= 100:
+            self.vol.setValue(vol)  # change_volume 経由で audio にも反映
+        muted = s.get("muted")
+        if isinstance(muted, bool):
+            self.mute_btn.setChecked(muted)
+            self.audio.setMuted(muted)
+        rate = s.get("rate")
+        if rate in self._rates:
+            self._rate_idx = self._rates.index(rate)
+            try:
+                self.player.setPlaybackRate(rate)
+            except Exception:
+                pass
+            self.speed_btn.setText(f"速度 {rate}x")
+        pl = s.get("playlist")
+        if isinstance(pl, list):
+            paths = [p for p in pl if isinstance(p, str)]
+            if paths:
+                self.add_to_playlist(paths)
+
+    def restore_session(self) -> None:
+        self._apply_session(self._load_session())
+
     # ---------- 字幕 ----------
     @staticmethod
     def _sibling_subtitle(video_path: str | None) -> str | None:
@@ -762,6 +819,7 @@ class PlayerWindow(QMainWindow):
         # (_do_stop と同じ理由: player.stop() 後のデッドロック防止)。
         # 閉じる前に位置を記憶する (次回起動時に再開できる)。
         self._remember_current()
+        self._save_session()
         try:
             self.player.pause()
         except Exception:
@@ -911,6 +969,7 @@ def main(argv: list[str] | None = None) -> int:
         return _run_selftest(args)
     app = QApplication(sys.argv if argv is None else argv)
     w = PlayerWindow()
+    w.restore_session()
     w.show()
     # 起動引数で動画指定があれば自動オープン (検証用)
     if len(args) > 1 and os.path.isfile(args[1]):

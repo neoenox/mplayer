@@ -35,6 +35,7 @@ STAGES = [
     ("p9_subtitle", "tests/test_p9_subtitle.py", 150),
     ("p10_playlist", "tests/test_p10_playlist.py", 180),
     ("p11_release", "tests/test_p11_release.py", 60),
+    ("p12_settings", "tests/test_p12_settings.py", 90),
 ]
 
 
@@ -107,8 +108,13 @@ def main():
         print(f"--- {name} ...", flush=True, end="" if not args.verbose else "\n")
         env = dict(os.environ, MPLAYER_DUMP_SECS="30",
                    MPLAYER_DUMP_FILE=os.path.join(LOGDIR, f"{name}.pydump.txt"),
+                   MPLAYER_SESSION_FILE=os.path.join(LOGDIR, f"{name}.session.json"),
                    PYTHONUTF8="1",
                    QT_LOGGING_RULES="*.debug=false;qt.multimedia.*.info=false")
+        try:
+            os.remove(env["MPLAYER_SESSION_FILE"])
+        except OSError:
+            pass
         try:
             cp = subprocess.run([VENV_PY, "-u", rel], cwd=BASE, capture_output=True,
                                 text=True, timeout=timeout, errors="replace", env=env)
