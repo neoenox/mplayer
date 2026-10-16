@@ -4,6 +4,13 @@
 形式は [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に準拠し、
 バージョンは [Semantic Versioning](https://semver.org/lang/ja/) に従います。
 
+## [1.1.0] - 2026-10-16
+
+### Added
+- セッションの永続化 (`session.json`): 音量・ミュート・再生速度・プレイリストを
+  終了時に保存し、次回起動時に復元します
+- テスト時に `MPLAYER_SESSION_FILE` で保存先を隔離できます
+
 ## [1.0.0] - 2026-10-16
 
 初回リリース。Windows 向けの最小限のローカル動画プレイヤー。

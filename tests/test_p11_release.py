@@ -1,5 +1,6 @@
 """P11: リリース準備 (バージョン表記・CHANGELOG・CIリリース設定) の検証。"""
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -12,7 +13,7 @@ BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 def main():
     patch_message_boxes()
-    check("version constant is 1.0.0", app_main.__version__ == "1.0.0",
+    check("version is semver", bool(re.fullmatch(r"\d+\.\d+\.\d+", app_main.__version__)),
           f"ver={app_main.__version__}")
     check("app name set", bool(app_main.APP_NAME))
 
