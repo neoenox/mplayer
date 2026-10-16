@@ -41,6 +41,7 @@ STAGES = [
     ("p15_installer", "tests/test_p15_installer.py", 60),
     ("p16_subtitle_enc", "tests/test_p16_subtitle_enc.py", 90),
     ("p17_help", "tests/test_p17_help.py", 60),
+    ("p18_dnd_folder", "tests/test_p18_dnd_folder.py", 90),
 ]
 
 

@@ -57,8 +57,48 @@ SUPPORTED_FILTER = (
     "動画ファイル (*.mp4 *.mkv *.avi *.mov *.webm *.m4v *.mpg *.mpeg *.wmv);;すべてのファイル (*.*)"
 )
 
+# ドロップ/フォルダ走査で扱う拡張子 (小文字で比較)。
+VIDEO_EXTS = {".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v", ".mpg", ".mpeg", ".wmv"}
+SUBTITLE_EXTS = {".srt"}
+# フォルダをドロップした時に収集する最大件数 (巨大フォルダ対策)。
+DROP_MAX_FILES = 500
+
+
+def is_video_file(path: str) -> bool:
+    return os.path.splitext(path)[1].lower() in VIDEO_EXTS
+
+
+def collect_video_files(path: str, recursive: bool = True,
+                        limit: int = DROP_MAX_FILES) -> list[str]:
+    """ファイル/フォルダから動画ファイルを集める。
+
+    フォルダは既定で再帰的に走査し、名前順 (フォルダも名前順) で返す。
+    隠しフォルダ (先頭 '.') は除外し、limit 件で打ち切る。
+    """
+    if os.path.isfile(path):
+        return [path] if is_video_file(path) else []
+    if not os.path.isdir(path):
+        return []
+    out: list[str] = []
+    if recursive:
+        for root, dirs, files in os.walk(path):
+            dirs[:] = sorted(d for d in dirs if not d.startswith("."))
+            for name in sorted(files):
+                if is_video_file(name):
+                    out.append(os.path.join(root, name))
+                    if len(out) >= limit:
+                        return out
+    else:
+        for name in sorted(os.listdir(path)):
+            p = os.path.join(path, name)
+            if os.path.isfile(p) and is_video_file(p):
+                out.append(p)
+                if len(out) >= limit:
+                    return out
+    return out
+
 APP_NAME = "シンプル動画プレイヤー"
-__version__ = "1.6.0"
+__version__ = "1.7.0"
 
 
 def _resource_path(rel: str) -> str:
@@ -263,10 +303,11 @@ SHORTCUTS = [
 
 MOUSE_HELP = [
     ("ダブルクリック", "全画面切替"),
-    ("ドラッグ&ドロップ", "ファイルを開く / プレイリストに追加"),
+    ("ドラッグ&ドロップ", "ファイル / フォルダを開く・プレイリストに追加"),
 ]
 
 HELP_NOTES = [
+    "フォルダをドロップすると、中の動画を名前順にまとめてプレイリストへ追加します (500件まで)。",
     "字幕の文字コードは自動判定します (「字幕」→「文字コード」で手動指定も可能)。",
     "「字幕」メニューからサイズ・位置・縁取りを変更できます。",
     "終了時に音量・速度・プレイリスト・字幕設定を保存し、次回起動時に復元します。",
@@ -1183,13 +1224,64 @@ class PlayerWindow(QMainWindow):
 
     def dropEvent(self, event: QDropEvent) -> None:  # noqa: N802
         urls = event.mimeData().urls()
-        if urls:
-            local = urls[0].toLocalFile()
-            if local:
-                self.load(local)
+        paths = [p for p in (u.toLocalFile() for u in urls) if p]
+        if not paths:
+            super().dropEvent(event)
+            return
+
+        # 字幕ファイル単体のドロップは、字幕として読み込む。
+        if len(paths) == 1 and os.path.isfile(paths[0]) and \
+                os.path.splitext(paths[0])[1].lower() in SUBTITLE_EXTS:
+            if self.load_subtitles(paths[0]):
                 event.acceptProposedAction()
                 return
-        super().dropEvent(event)
+
+        videos: list[str] = []
+        other_files: list[str] = []
+        for p in paths:
+            if os.path.isdir(p):
+                videos.extend(collect_video_files(p))
+            elif is_video_file(p):
+                videos.append(p)
+            elif os.path.isfile(p):
+                other_files.append(p)
+
+        # 重複を除去 (順序は保持)。
+        seen: set[str] = set()
+        unique: list[str] = []
+        for v in videos:
+            key = os.path.abspath(v)
+            if key not in seen:
+                seen.add(key)
+                unique.append(v)
+        videos = unique
+
+        if not videos:
+            # 動画が無い場合は従来動作 (先頭のファイルを開く)。
+            if other_files:
+                self.load(other_files[0])
+                event.acceptProposedAction()
+                return
+            super().dropEvent(event)
+            return
+
+        if len(videos) == 1 and not other_files:
+            self.load(videos[0])
+            event.acceptProposedAction()
+            return
+
+        # 複数 (フォルダ展開含む) はプレイリストに追加し、先頭を再生する。
+        self.add_to_playlist(videos)
+        row = self._row_of_path(os.path.abspath(videos[0]))
+        if row >= 0:
+            self.play_index(row)
+        event.acceptProposedAction()
+
+    def _row_of_path(self, path: str) -> int:
+        for i in range(self.playlist.count()):
+            if self.playlist.item(i).data(Qt.ItemDataRole.UserRole) == path:
+                return i
+        return -1
 
     # ---------- 再生状態反映 ----------
     @Slot(int)
