@@ -59,6 +59,21 @@ run.bat C:\path\to\movie.mp4
 mp4 (H.264/AAC 推奨), mkv, avi, mov, webm, wmv 等。
 Qt 6.12 時点で Windows でも FFmpeg が標準バックエンドです。
 
+## 配布用exe (Python不要)
+
+Python 環境のない PC でも動く単体フォルダを生成できます。
+
+```bat
+build_exe.bat
+rem 生成物: dist\mplayer\mplayer.exe (ポータブルフォルダ, 約150MB)
+```
+
+- PyInstaller でビルドし、QtMultimedia の ffmpeg プラグインと同梱 FFmpeg DLL
+  (`avcodec-63` 等) を含めます
+- ビルド後に自己診断 (`--selftest`) を自動実行し、実際にデコードできるか検証します
+- 手動診断: `dist\mplayer\mplayer.exe --selftest <動画> --selftest-out <結果.json>`
+  (終了コード 0=成功, 1=失敗)
+
 ## 自動テスト (無音・無人で実行)
 
 ```bat

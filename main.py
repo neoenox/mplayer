@@ -516,12 +516,71 @@ class PlayerWindow(QMainWindow):
             QMessageBox.warning(self, "再生エラー", f"読み込みに失敗しました:\n{msg}")
 
 
+def _run_selftest(argv: list[str]) -> int:
+    """配布exe/CI 用の自己診断。動画を開き、実際にデコードが進むか確認する。
+
+    使い方:
+        mplayer.exe --selftest <動画> [--selftest-out <結果jsonパス>]
+    終了コード: 0=成功, 1=失敗。ウィンドウ付きexeでも結果が取れるよう、
+    指定があればJSONファイルにも書き出す。
+    """
+    import time
+
+    video = ""
+    out_path = None
+    try:
+        i = argv.index("--selftest")
+        if i + 1 < len(argv):
+            video = argv[i + 1]
+    except ValueError:
+        pass
+    if "--selftest-out" in argv:
+        j = argv.index("--selftest-out")
+        if j + 1 < len(argv):
+            out_path = argv[j + 1]
+
+    app = QApplication(argv[:1])
+    w = PlayerWindow()
+    w.show()
+    w.vol.setValue(0)  # 診断中は無音
+    result = {"ok": False, "reason": "", "position": 0, "duration": 0}
+
+    if not video or not os.path.isfile(video):
+        result["reason"] = f"video not found: {video!r}"
+    else:
+        w.load(video)
+        deadline = time.time() + 15.0
+        while time.time() < deadline:
+            app.processEvents()
+            pos, dur = w.player.position(), w.player.duration()
+            if dur > 0 and pos > 0:
+                result.update(ok=True, position=pos, duration=dur)
+                break
+            time.sleep(0.05)
+        if not result["ok"]:
+            result["reason"] = "no playback progress within 15s"
+
+    try:
+        w.player.pause()
+    except Exception:
+        pass
+    if out_path:
+        try:
+            with open(out_path, "w", encoding="utf-8") as f:
+                json.dump(result, f, ensure_ascii=False)
+        except Exception:
+            pass
+    return 0 if result["ok"] else 1
+
+
 def main(argv: list[str] | None = None) -> int:
+    args = list(sys.argv if argv is None else argv)
+    if "--selftest" in args:
+        return _run_selftest(args)
     app = QApplication(sys.argv if argv is None else argv)
     w = PlayerWindow()
     w.show()
     # 起動引数で動画指定があれば自動オープン (検証用)
-    args = argv if argv is not None else sys.argv
     if len(args) > 1 and os.path.isfile(args[1]):
         w.load(args[1])
     return app.exec()
