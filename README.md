@@ -85,6 +85,20 @@ rem 生成物: dist\mplayer\mplayer.exe (ポータブルフォルダ, 約150MB)
 - 手動診断: `dist\mplayer\mplayer.exe --selftest <動画> --selftest-out <結果.json>`
   (終了コード 0=成功, 1=失敗)
 
+## Windows インストーラ
+
+スタートメニュー登録・アンインストーラ付きのセットアップを作成できます。
+[Inno Setup 6](https://jrsoftware.org/isinfo.php) が必要です。
+
+```bat
+build_installer.bat
+rem 生成物: dist\installer\mplayer-setup-<version>.exe
+rem ISCC.exe が見つからない場合は INNO_SETUP 環境変数で指定できます
+```
+
+- インストール先は既定でユーザー領域 (`%LOCALAPPDATA%\Programs`) のため管理者権限不要
+- 日本語 UI、デスクトップショートカット (任意)、インストール直後の起動オプション付き
+
 ## 自動テスト (無音・無人で実行)
 
 ```bat
@@ -103,7 +117,8 @@ rem 直接実行・特定ステージ・詳細表示:
 ## リリース / 変更履歴
 
 - バージョンは `main.py` の `__version__` と `CHANGELOG.md` で管理します
-- `v*` タグを push すると CI が exe をビルドし、zip を添付した GitHub Release を自動作成します
+- `v*` タグを push すると CI が exe とインストーラをビルドし、zip と
+  `mplayer-setup-<ver>.exe` を添付した GitHub Release を自動作成します
 
 ```bat
 git tag v1.0.0

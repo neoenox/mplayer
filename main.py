@@ -50,7 +50,7 @@ SUPPORTED_FILTER = (
 )
 
 APP_NAME = "シンプル動画プレイヤー"
-__version__ = "1.3.0"
+__version__ = "1.4.0"
 
 
 def _resource_path(rel: str) -> str:

@@ -38,6 +38,7 @@ STAGES = [
     ("p12_settings", "tests/test_p12_settings.py", 90),
     ("p13_subtitle_style", "tests/test_p13_subtitle_style.py", 90),
     ("p14_icon", "tests/test_p14_icon.py", 60),
+    ("p15_installer", "tests/test_p15_installer.py", 60),
 ]
 
 
