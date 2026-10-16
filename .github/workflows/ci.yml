@@ -66,12 +66,29 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: python tests/run_all.py p8_exe
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { $iscc = "C:\Program Files\Inno Setup 6\ISCC.exe" }
+          "INNO_SETUP=$iscc" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          python tools/make_installer.py
+      - name: Verify installer
+        run: python tests/run_all.py p15_installer
       - name: Upload portable build
         if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
         uses: actions/upload-artifact@v7
         with:
           name: mplayer-windows
           path: dist/mplayer/
+      - name: Upload installer
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@v7
+        with:
+          name: mplayer-installer
+          path: dist/installer/*.exe
       - name: Package zip
         if: startsWith(github.ref, 'refs/tags/')
         shell: pwsh
@@ -80,7 +97,9 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v3
         with:
-          files: dist/mplayer-windows-${{ github.ref_name }}.zip
+          files: |
+            dist/mplayer-windows-${{ github.ref_name }}.zip
+            dist/installer/mplayer-setup-*.exe
           generate_release_notes: true
           draft: false
 

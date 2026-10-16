@@ -4,6 +4,15 @@
 形式は [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に準拠し、
 バージョンは [Semantic Versioning](https://semver.org/lang/ja/) に従います。
 
+## [1.4.0] - 2026-10-16
+
+### Added
+- Windows インストーラ (Inno Setup): `installer/mplayer.iss` と
+  `tools/make_installer.py` / `build_installer.bat`。スタートメニュー登録、
+  デスクトップショートカット (任意)、アンインストーラ、日本語 UI に対応
+- CI がタグ時にインストーラもビルドし、Release に `mplayer-setup-<ver>.exe` を添付
+- テスト `tests/test_p15_installer.py` (iss 静的検査 + 生成物の検証)
+
 ## [1.3.0] - 2026-10-16
 
 ### Added
