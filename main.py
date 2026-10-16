@@ -37,6 +37,7 @@ from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
     QApplication,
     QDockWidget,
+    QDialog,
     QFileDialog,
     QHBoxLayout,
     QLabel,
@@ -47,6 +48,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSlider,
     QStyle,
+    QTextBrowser,
     QVBoxLayout,
     QWidget,
 )
@@ -56,7 +58,7 @@ SUPPORTED_FILTER = (
 )
 
 APP_NAME = "シンプル動画プレイヤー"
-__version__ = "1.5.0"
+__version__ = "1.6.0"
 
 
 def _resource_path(rel: str) -> str:
@@ -245,7 +247,80 @@ class SubtitleLabel(QLabel):
         p.end()
 
 
+# キーボードショートカット (ヘルプ表示とテストで共用)。
+SHORTCUTS = [
+    ("Ctrl+O", "ファイルを開く"),
+    ("Space", "再生 / 一時停止"),
+    ("← / →", "5秒戻る / 5秒進む"),
+    ("Ctrl+← / Ctrl+→", "前の動画 / 次の動画"),
+    ("↑ / ↓", "音量 +10 / -10"),
+    ("M", "ミュート切替"),
+    ("S", "字幕 ON / OFF"),
+    ("F / F11", "全画面切替"),
+    ("Esc", "全画面を解除"),
+    ("F1", "このヘルプを表示"),
+]
+
+MOUSE_HELP = [
+    ("ダブルクリック", "全画面切替"),
+    ("ドラッグ&ドロップ", "ファイルを開く / プレイリストに追加"),
+]
+
+HELP_NOTES = [
+    "字幕の文字コードは自動判定します (「字幕」→「文字コード」で手動指定も可能)。",
+    "「字幕」メニューからサイズ・位置・縁取りを変更できます。",
+    "終了時に音量・速度・プレイリスト・字幕設定を保存し、次回起動時に復元します。",
+    "動画と同じフォルダに同名の .srt があれば、自動で読み込みます。",
+]
+
+
+def build_help_html() -> str:
+    """ヘルプダイアログの HTML を生成する。"""
+    rows = "".join(
+        f'<tr><td style="padding:2px 12px 2px 0;"><b>{k}</b></td>'
+        f'<td style="padding:2px 0;">{v}</td></tr>'
+        for k, v in SHORTCUTS)
+    mouse = "".join(
+        f'<tr><td style="padding:2px 12px 2px 0;"><b>{k}</b></td>'
+        f'<td style="padding:2px 0;">{v}</td></tr>'
+        for k, v in MOUSE_HELP)
+    notes = "".join(f"<li>{n}</li>" for n in HELP_NOTES)
+    return (
+        f"<h3>{APP_NAME} v{__version__}</h3>"
+        "<h4>キーボードショートカット</h4>"
+        f"<table cellspacing='0'>{rows}</table>"
+        "<h4>マウス操作</h4>"
+        f"<table cellspacing='0'>{mouse}</table>"
+        "<h4>ヒント</h4>"
+        f"<ul>{notes}</ul>"
+    )
+
+
+class HelpDialog(QDialog):
+    """ショートカット一覧と使い方のヒントを表示する非モーダルダイアログ。"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("ヘルプ / ショートカット")
+        self.setModal(False)
+        self.resize(560, 460)
+        layout = QVBoxLayout(self)
+        self.browser = QTextBrowser(self)
+        self.browser.setObjectName("help_browser")
+        self.browser.setOpenExternalLinks(True)
+        self.browser.setHtml(build_help_html())
+        layout.addWidget(self.browser)
+        close_btn = QPushButton("閉じる", self)
+        close_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        close_btn.clicked.connect(self.close)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        row.addWidget(close_btn)
+        layout.addLayout(row)
+
+
 class PlayerWindow(QMainWindow):
+
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle(f"{APP_NAME} v{__version__}")
@@ -537,9 +612,15 @@ class PlayerWindow(QMainWindow):
             enc_menu.addAction(a)
 
         help_menu = self.menuBar().addMenu("ヘルプ")
+        self.help_act = QAction("ショートカット一覧", self)
+        self.help_act.setShortcut(Qt.Key.Key_F1)
+        self.help_act.triggered.connect(self.show_shortcuts)
+        help_menu.addAction(self.help_act)
+        help_menu.addSeparator()
         about_act = QAction("バージョン情報", self)
         about_act.triggered.connect(self.show_about)
         help_menu.addAction(about_act)
+        self._help_dialog: HelpDialog | None = None
         self._is_fullscreen = False
         self._suppress_error_box = False
         # 遅延シークの世代管理。load()ごとに加算し、古いファイル向けの
@@ -1059,6 +1140,15 @@ class PlayerWindow(QMainWindow):
             if self._dock_visible_before_fs:
                 self.pl_dock.show()
             self.fs_btn.setText("全画面")
+
+    @Slot()
+    def show_shortcuts(self) -> None:
+        """ショートカット一覧ダイアログを表示する (非モーダル・使い回し)。"""
+        if self._help_dialog is None:
+            self._help_dialog = HelpDialog(self)
+        self._help_dialog.show()
+        self._help_dialog.raise_()
+        self._help_dialog.activateWindow()
 
     @Slot()
     def show_about(self) -> None:
