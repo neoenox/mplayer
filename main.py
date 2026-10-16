@@ -17,7 +17,7 @@ import os
 import re
 import sys
 
-from PySide6.QtCore import QPointF, Qt, QTimer, QUrl, Slot
+from PySide6.QtCore import QEvent, QPointF, Qt, QTimer, QUrl, Slot
 from PySide6.QtGui import (
     QAction,
     QActionGroup,
@@ -98,7 +98,7 @@ def collect_video_files(path: str, recursive: bool = True,
     return out
 
 APP_NAME = "シンプル動画プレイヤー"
-__version__ = "1.10.0"
+__version__ = "1.11.0"
 
 
 def _resource_path(rel: str) -> str:
@@ -356,6 +356,7 @@ MOUSE_HELP = [
 
 HELP_NOTES = [
     "フォルダをドロップすると、中の動画を名前順にまとめてプレイリストへ追加します (500件まで)。",
+    "全画面では操作系が自動で隠れます。マウスを動かすと再表示されます (Esc で解除)。",
     "字幕の文字コードは自動判定します (「字幕」→「文字コード」で手動指定も可能)。",
     "「字幕」メニューからサイズ・位置・縁取り・文字色・フォントを変更できます。",
     "終了時に音量・速度・プレイリスト・字幕設定を保存し、次回起動時に復元します。",
@@ -536,14 +537,27 @@ class PlayerWindow(QMainWindow):
         bottom_row.addStretch(1)
         bottom_row.addWidget(self.fs_btn)
 
+        # 操作系は1つのウィジェットにまとめる (全画面時に一括で隠すため)。
+        self.controls = QWidget(self)
+        ctl_lay = QVBoxLayout(self.controls)
+        ctl_lay.setContentsMargins(0, 0, 0, 0)
+        ctl_lay.setSpacing(4)
+        ctl_lay.addLayout(top_row)
+        ctl_lay.addLayout(bottom_row)
+
         layout = QVBoxLayout()
         layout.addWidget(self.video, 1)
-        layout.addLayout(top_row)
-        layout.addLayout(bottom_row)
+        layout.addWidget(self.controls)
 
         central = QWidget(self)
         central.setLayout(layout)
         self.setCentralWidget(central)
+        self._central = central
+        # 全画面時のフェード用に、映像領域・中央ウィジェットのマウス移動も拾う。
+        self.video.setMouseTracking(True)
+        central.setMouseTracking(True)
+        self.video.installEventFilter(self)
+        central.installEventFilter(self)
 
         # --- プレイリスト (連続再生) ---
         self.playlist = QListWidget()
@@ -746,6 +760,11 @@ class PlayerWindow(QMainWindow):
         help_menu.addAction(about_act)
         self._help_dialog: HelpDialog | None = None
         self._is_fullscreen = False
+        # 全画面で操作が無いとき操作系を隠すまでの待ち時間 (ms)。テストで短縮可能。
+        self._fs_hide_ms = 2500
+        self._fs_timer = QTimer(self)
+        self._fs_timer.setSingleShot(True)
+        self._fs_timer.timeout.connect(self._hide_fs_controls)
         self._suppress_error_box = False
         # 遅延シークの世代管理。load()ごとに加算し、古いファイル向けの
         # 予約シークが新ファイルへ誤適用されるのを防ぐ (P5)。
@@ -1309,16 +1328,51 @@ class PlayerWindow(QMainWindow):
             self.menuBar().hide()
             self.showFullScreen()
             self.fs_btn.setText("全画面解除")
+            self._show_fs_controls()
+            self._fs_timer.start(self._fs_hide_ms)
 
     @Slot()
     def exit_fullscreen(self) -> None:
         if self._is_fullscreen:
             self._is_fullscreen = False
+            self._fs_timer.stop()
+            self._show_fs_controls()
             self.showNormal()
             self.menuBar().show()
             if self._dock_visible_before_fs:
                 self.pl_dock.show()
             self.fs_btn.setText("全画面")
+
+    # ---------- 全画面: 操作系の自動表示/フェード ----------
+    def note_activity(self) -> None:
+        """マウス操作などの合図。全画面中は操作系を表示してタイマーを張り直す。"""
+        if not self._is_fullscreen:
+            return
+        self._show_fs_controls()
+        self._fs_timer.start(self._fs_hide_ms)
+
+    def _show_fs_controls(self) -> None:
+        if not self.controls.isVisible():
+            self.controls.setVisible(True)
+        if self.cursor().shape() == Qt.CursorShape.BlankCursor:
+            self.unsetCursor()
+
+    def _hide_fs_controls(self) -> None:
+        """全画面で一定時間操作が無いとき、操作系とカーソルを隠す。"""
+        if not self._is_fullscreen:
+            return
+        self.controls.hide()
+        self.setCursor(Qt.CursorShape.BlankCursor)
+
+    def mouseMoveEvent(self, event) -> None:  # noqa: N802
+        self.note_activity()
+        super().mouseMoveEvent(event)
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802
+        # 子ウィジェット (映像領域など) 上のマウス移動も活動として扱う。
+        if event.type() == QEvent.Type.MouseMove and self._is_fullscreen:
+            self.note_activity()
+        return super().eventFilter(obj, event)
 
     @Slot()
     def show_shortcuts(self) -> None:

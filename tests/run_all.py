@@ -45,6 +45,7 @@ STAGES = [
     ("p19_stability", "tests/test_p19_stability.py", 300),
     ("p20_speed", "tests/test_p20_speed.py", 90),
     ("p21_subtitle_color", "tests/test_p21_subtitle_color.py", 90),
+    ("p22_fs_overlay", "tests/test_p22_fs_overlay.py", 90),
 ]
 
 
