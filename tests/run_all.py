@@ -36,6 +36,7 @@ STAGES = [
     ("p10_playlist", "tests/test_p10_playlist.py", 180),
     ("p11_release", "tests/test_p11_release.py", 60),
     ("p12_settings", "tests/test_p12_settings.py", 90),
+    ("p13_subtitle_style", "tests/test_p13_subtitle_style.py", 90),
 ]
 
 
@@ -85,6 +86,13 @@ def env_info():
 
 def main():
     import argparse
+    # 子プロセスは UTF-8 で出力する (PYTHONUTF8=1)。コンソール既定 (cp932) で
+    # 日本語や置換文字を print すると落ちるため、標準出力を UTF-8 に切り替える。
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
     ap = argparse.ArgumentParser(description="mplayer test runner (quiet by default)")
     ap.add_argument("-v", "--verbose", action="store_true",
                     help="子プロセスの出力をそのまま流す (うるさい)")
@@ -117,7 +125,8 @@ def main():
             pass
         try:
             cp = subprocess.run([VENV_PY, "-u", rel], cwd=BASE, capture_output=True,
-                                text=True, timeout=timeout, errors="replace", env=env)
+                                text=True, timeout=timeout, errors="replace",
+                                encoding="utf-8", env=env)
             out = (cp.stdout or "") + "\n[stderr]\n" + (cp.stderr or "")
             status = "EXIT" if cp.returncode == 0 else "EXIT-NONZERO"
             code = cp.returncode
