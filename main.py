@@ -11,8 +11,10 @@ avcodec/avformat/avutil/swresample/swscale) が標準で使われる。
 """
 from __future__ import annotations
 
+import bisect
 import json
 import os
+import re
 import sys
 
 from PySide6.QtCore import Qt, QTimer, QUrl, Slot
@@ -21,9 +23,12 @@ from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
     QApplication,
+    QDockWidget,
     QFileDialog,
     QHBoxLayout,
     QLabel,
+    QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QMessageBox,
     QPushButton,
@@ -55,6 +60,45 @@ def format_ms(ms: int) -> str:
     return f"{m:02d}:{s:02d}"
 
 
+def _parse_srt_timestamp(text: str) -> int:
+    """'00:00:01,500' / '00:01:02.250' / '01:02' をミリ秒に変換する。"""
+    t = text.strip().replace(",", ".")
+    parts = t.split(":")
+    if len(parts) == 3:
+        h, m, sec = parts
+    elif len(parts) == 2:
+        h, (m, sec) = 0, parts
+    else:
+        raise ValueError(f"bad timestamp: {text!r}")
+    return int(h) * 3600000 + int(m) * 60000 + int(round(float(sec) * 1000))
+
+
+def parse_srt(text: str) -> list[tuple[int, int, str]]:
+    """SRT文字列を (開始ms, 終了ms, 本文) のリストに変換する。
+
+    不正なブロックは黙って読み飛ばす (破損ファイルでもクラッシュしない)。
+    """
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n").lstrip("\ufeff")
+    cues: list[tuple[int, int, str]] = []
+    for block in re.split(r"\n[ \t]*\n", normalized):
+        lines = block.split("\n")
+        ts_idx = next((i for i, ln in enumerate(lines) if "-->" in ln), None)
+        if ts_idx is None:
+            continue
+        left, _, right = lines[ts_idx].partition("-->")
+        try:
+            start = _parse_srt_timestamp(left)
+            # 末尾に座標等が付く形式 ("... --> 00:00:02,000 X1:..") を許容
+            end = _parse_srt_timestamp(right.strip().split()[0])
+        except Exception:
+            continue
+        body = "\n".join(ln for ln in lines[ts_idx + 1:]).strip()
+        if body:
+            cues.append((start, end, body))
+    cues.sort(key=lambda c: c[0])
+    return cues
+
+
 class PlayerWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -70,6 +114,25 @@ class PlayerWindow(QMainWindow):
         # アスペクト比を保ったままウィンドウに追従
         self.video.setAspectRatioMode(Qt.AspectRatioMode.KeepAspectRatio)
         self.player.setVideoOutput(self.video)
+
+        # 字幕オーバーレイ: 映像の上に重ねる。マウスは透過させ、
+        # ダブルクリックでの全画面切替を妨げない。
+        self.subtitle_label = QLabel(self.video)
+        self.subtitle_label.setObjectName("subtitle_label")
+        self.subtitle_label.setAlignment(
+            Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom)
+        self.subtitle_label.setWordWrap(True)
+        self.subtitle_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.subtitle_label.setStyleSheet(
+            "#subtitle_label { color: white; background-color: rgba(0, 0, 0, 150);"
+            " padding: 2px 10px; font-size: 18px; }")
+        self.subtitle_label.setText("")
+        self.subtitle_label.hide()
+        # 映像の下端に配置 (addStretch で下寄せ)。背景は字幕行の高さのみ。
+        _overlay = QVBoxLayout(self.video)
+        _overlay.setContentsMargins(0, 0, 0, 14)
+        _overlay.addStretch(1)
+        _overlay.addWidget(self.subtitle_label)
 
         # --- UI ---
         # NOTE: 操作系ウィジェットはフォーカスを受け取らない (NoFocus)。
@@ -127,6 +190,17 @@ class PlayerWindow(QMainWindow):
         self.speed_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.speed_btn.clicked.connect(self.cycle_speed)
 
+        self.subs_btn = QPushButton("字幕")
+        self.subs_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.subs_btn.setCheckable(True)
+        self.subs_btn.setEnabled(False)
+        self.subs_btn.clicked.connect(self.toggle_subtitles)
+
+        self.pl_btn = QPushButton("リスト")
+        self.pl_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.pl_btn.setCheckable(True)
+        self.pl_btn.toggled.connect(self._toggle_playlist_dock)
+
         self.fs_btn = QPushButton("全画面")
         self.fs_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.fs_btn.clicked.connect(self.toggle_fullscreen)
@@ -143,6 +217,8 @@ class PlayerWindow(QMainWindow):
         bottom_row.addWidget(self.vol)
         bottom_row.addWidget(self.mute_btn)
         bottom_row.addWidget(self.speed_btn)
+        bottom_row.addWidget(self.subs_btn)
+        bottom_row.addWidget(self.pl_btn)
         bottom_row.addStretch(1)
         bottom_row.addWidget(self.fs_btn)
 
@@ -154,6 +230,43 @@ class PlayerWindow(QMainWindow):
         central = QWidget(self)
         central.setLayout(layout)
         self.setCentralWidget(central)
+
+        # --- プレイリスト (連続再生) ---
+        self.playlist = QListWidget()
+        self.playlist.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.playlist.itemDoubleClicked.connect(self._on_playlist_activated)
+
+        self.pl_dock = QDockWidget("プレイリスト", self)
+        self.pl_dock.setObjectName("playlist_dock")
+        pl_panel = QWidget()
+        pl_lay = QVBoxLayout(pl_panel)
+        pl_lay.setContentsMargins(4, 4, 4, 4)
+        pl_lay.setSpacing(4)
+        pl_top = QHBoxLayout()
+        self.pl_add_btn = QPushButton("追加")
+        self.pl_del_btn = QPushButton("削除")
+        self.pl_clear_btn = QPushButton("クリア")
+        for b in (self.pl_add_btn, self.pl_del_btn, self.pl_clear_btn):
+            b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            pl_top.addWidget(b)
+        pl_bot = QHBoxLayout()
+        self.prev_btn = QPushButton("前へ")
+        self.next_btn = QPushButton("次へ")
+        for b in (self.prev_btn, self.next_btn):
+            b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            pl_bot.addWidget(b)
+        self.pl_add_btn.clicked.connect(self.add_files_dialog)
+        self.pl_del_btn.clicked.connect(self.remove_selected)
+        self.pl_clear_btn.clicked.connect(self.clear_playlist)
+        self.prev_btn.clicked.connect(self.play_prev)
+        self.next_btn.clicked.connect(self.play_next)
+        pl_lay.addLayout(pl_top)
+        pl_lay.addWidget(self.playlist, 1)
+        pl_lay.addLayout(pl_bot)
+        self.pl_dock.setWidget(pl_panel)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.pl_dock)
+        self.pl_dock.hide()
+        self.pl_dock.visibilityChanged.connect(self.pl_btn.setChecked)
 
         # --- シグナル ---
         self.player.positionChanged.connect(self.on_position_changed)
@@ -169,6 +282,14 @@ class PlayerWindow(QMainWindow):
         open_act.setShortcut(QKeySequence.StandardKey.Open)
         open_act.triggered.connect(self.open_file_dialog)
         file_menu.addAction(open_act)
+
+        sub_open_act = QAction("字幕を開く...", self)
+        sub_open_act.triggered.connect(self.open_subtitle_dialog)
+        file_menu.addAction(sub_open_act)
+
+        pl_add_act = QAction("プレイリストに追加...", self)
+        pl_add_act.triggered.connect(self.add_files_dialog)
+        file_menu.addAction(pl_add_act)
 
         self.fs_act = QAction("全画面切替", self)
         self.fs_act.setShortcut(Qt.Key.Key_F11)
@@ -216,6 +337,21 @@ class PlayerWindow(QMainWindow):
         down_act.triggered.connect(lambda: self.vol.setValue(max(0, self.vol.value() - 10)))
         self.addAction(down_act)
 
+        s_act = QAction(self)
+        s_act.setShortcut(Qt.Key.Key_S)
+        s_act.triggered.connect(lambda: self.subs_btn.click())
+        self.addAction(s_act)
+
+        next_act = QAction(self)
+        next_act.setShortcut(QKeySequence("Ctrl+Right"))
+        next_act.triggered.connect(self.play_next)
+        self.addAction(next_act)
+
+        prev_act = QAction(self)
+        prev_act.setShortcut(QKeySequence("Ctrl+Left"))
+        prev_act.triggered.connect(self.play_prev)
+        self.addAction(prev_act)
+
         self._is_fullscreen = False
         self._suppress_error_box = False
         # 遅延シークの世代管理。load()ごとに加算し、古いファイル向けの
@@ -230,6 +366,12 @@ class PlayerWindow(QMainWindow):
         self._resume = self._load_resume()
         self._current_path: str | None = None
         self._restore_pos: int | None = None
+        # 字幕 (SRT)。cues は (開始ms, 終了ms, 本文) の昇順リスト。
+        self._cues: list[tuple[int, int, str]] = []
+        self._cue_starts: list[int] = []
+        self._subs_enabled = False
+        # 全画面時にプレイリストの表示状態を退避
+        self._dock_visible_before_fs = False
 
     # ---------- ファイル ----------
     @Slot()
@@ -249,10 +391,16 @@ class PlayerWindow(QMainWindow):
         self._pending_seek = None
         self._current_path = os.path.abspath(path)
         self._restore_pos = self._resume_pos_for(self._current_path)
+        # 字幕をリセットし、同名 .srt があれば自動で読み込む
+        self.clear_subtitles()
         self.player.setSource(QUrl.fromLocalFile(path))
         self.play_btn.setEnabled(True)
         self.stop_btn.setEnabled(True)
         self.seek.setEnabled(True)
+        self.subs_btn.setEnabled(True)
+        auto_sub = self._sibling_subtitle(self._current_path)
+        if auto_sub:
+            self.load_subtitles(auto_sub)
         self.setWindowTitle(f"シンプル動画プレイヤー - {os.path.basename(path)}")
         self.player.play()
         return True
@@ -307,6 +455,164 @@ class PlayerWindow(QMainWindow):
                 self._save_resume()
         except Exception:
             pass
+
+    # ---------- 字幕 ----------
+    @staticmethod
+    def _sibling_subtitle(video_path: str | None) -> str | None:
+        """動画と同じフォルダの同名 .srt を探す。"""
+        if not video_path:
+            return None
+        stem = os.path.splitext(video_path)[0]
+        for cand in (stem + ".srt", stem + ".SRT", stem + ".Srt"):
+            if os.path.isfile(cand):
+                return cand
+        return None
+
+    def load_subtitles(self, path: str) -> bool:
+        """SRT を読み込む。読み込めなければ False (クラッシュしない)。"""
+        try:
+            with open(path, encoding="utf-8-sig", errors="replace") as f:
+                text = f.read()
+        except Exception:
+            return False
+        cues = parse_srt(text)
+        self._cues = cues
+        self._cue_starts = [c[0] for c in cues]
+        self._subs_enabled = bool(cues)
+        self.subs_btn.setChecked(bool(cues))
+        self.subs_btn.setText("字幕 ON" if cues else "字幕")
+        self.update_subtitle(self.player.position())
+        return bool(cues)
+
+    def clear_subtitles(self) -> None:
+        self._cues = []
+        self._cue_starts = []
+        self._subs_enabled = False
+        self.subtitle_label.setText("")
+        self.subtitle_label.hide()
+        self.subs_btn.setChecked(False)
+        self.subs_btn.setText("字幕")
+
+    @Slot()
+    def toggle_subtitles(self) -> None:
+        # チェック状態はクリックで既に反転している。ONにしたい時に字幕が
+        # 無ければ、同名 .srt の自動読み込みを試みる。
+        want_on = self.subs_btn.isChecked()
+        if want_on and not self._cues:
+            auto = self._sibling_subtitle(self._current_path)
+            if not (auto and self.load_subtitles(auto)):
+                self.subs_btn.setChecked(False)
+                self.subs_btn.setText("字幕")
+                self.subtitle_label.hide()
+                return
+        self._subs_enabled = want_on
+        self.subs_btn.setText("字幕 ON" if want_on else "字幕")
+        self.update_subtitle(self.player.position())
+
+    @Slot()
+    def open_subtitle_dialog(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "字幕ファイルを選択", "",
+            "字幕ファイル (*.srt);;すべてのファイル (*.*)")
+        if path:
+            self.load_subtitles(path)
+
+    def _cue_text_at(self, pos: int) -> str:
+        if not self._cues:
+            return ""
+        i = bisect.bisect_right(self._cue_starts, pos) - 1
+        if i >= 0:
+            start, end, body = self._cues[i]
+            if start <= pos < end:
+                return body
+        return ""
+
+    def update_subtitle(self, pos: int) -> None:
+        text = self._cue_text_at(pos) if self._subs_enabled else ""
+        if self.subtitle_label.text() != text:
+            self.subtitle_label.setText(text)
+        self.subtitle_label.setVisible(bool(text))
+
+    # ---------- プレイリスト (連続再生) ----------
+    def _toggle_playlist_dock(self, checked: bool) -> None:
+        self.pl_dock.setVisible(bool(checked))
+
+    def add_files_dialog(self) -> None:
+        paths, _ = QFileDialog.getOpenFileNames(self, "プレイリストに追加", "", SUPPORTED_FILTER)
+        if paths:
+            self.add_to_playlist(paths)
+
+    def add_to_playlist(self, paths) -> int:
+        existing = {self.playlist.item(i).data(Qt.ItemDataRole.UserRole)
+                    for i in range(self.playlist.count())}
+        added = 0
+        for p in paths:
+            if not p or not os.path.isfile(p):
+                continue
+            ap = os.path.abspath(p)
+            if ap in existing:
+                continue
+            it = QListWidgetItem(os.path.basename(p))
+            it.setData(Qt.ItemDataRole.UserRole, ap)
+            it.setToolTip(ap)
+            self.playlist.addItem(it)
+            existing.add(ap)
+            added += 1
+        if added and not self.pl_dock.isVisible():
+            self.pl_dock.show()
+        return added
+
+    def remove_selected(self) -> None:
+        for it in self.playlist.selectedItems():
+            self.playlist.takeItem(self.playlist.row(it))
+
+    def clear_playlist(self) -> None:
+        self.playlist.clear()
+
+    def _on_playlist_activated(self, item: QListWidgetItem) -> None:
+        self.play_index(self.playlist.row(item))
+
+    def _index_of_current(self) -> int:
+        if not self._current_path:
+            return -1
+        for i in range(self.playlist.count()):
+            if self.playlist.item(i).data(Qt.ItemDataRole.UserRole) == self._current_path:
+                return i
+        return -1
+
+    def play_index(self, i: int) -> bool:
+        if 0 <= i < self.playlist.count():
+            path = self.playlist.item(i).data(Qt.ItemDataRole.UserRole)
+            if path and self.load(path):
+                self.playlist.setCurrentRow(i)
+                return True
+        return False
+
+    def play_next(self) -> bool:
+        return self._step_track(+1)
+
+    def play_prev(self) -> bool:
+        return self._step_track(-1)
+
+    def _step_track(self, delta: int) -> bool:
+        if self.playlist.count() == 0:
+            return False
+        row = self.playlist.currentRow()
+        if row < 0:
+            row = self._index_of_current()
+        if row < 0:
+            return self.play_index(0 if delta > 0 else self.playlist.count() - 1)
+        nxt = row + delta
+        if 0 <= nxt < self.playlist.count():
+            return self.play_index(nxt)
+        return False
+
+    def _advance_if_in_playlist(self) -> bool:
+        """再生中のファイルがリスト内にある場合のみ「次の曲」へ進む。"""
+        idx = self._index_of_current()
+        if idx < 0 or idx + 1 >= self.playlist.count():
+            return False
+        return self.play_index(idx + 1)
 
     # ---------- 操作 ----------
     @Slot()
@@ -415,6 +721,9 @@ class PlayerWindow(QMainWindow):
             self.exit_fullscreen()
         else:
             self._is_fullscreen = True
+            self._dock_visible_before_fs = self.pl_dock.isVisible()
+            self.pl_dock.hide()
+            self.menuBar().hide()
             self.showFullScreen()
             self.fs_btn.setText("全画面解除")
 
@@ -423,6 +732,9 @@ class PlayerWindow(QMainWindow):
         if self._is_fullscreen:
             self._is_fullscreen = False
             self.showNormal()
+            self.menuBar().show()
+            if self._dock_visible_before_fs:
+                self.pl_dock.show()
             self.fs_btn.setText("全画面")
 
     def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802
@@ -463,6 +775,7 @@ class PlayerWindow(QMainWindow):
         if not self.seek.isSliderDown():
             self.seek.setValue(pos)
         self.time_label.setText(f"{format_ms(pos)} / {format_ms(self.player.duration())}")
+        self.update_subtitle(pos)
 
     @Slot(int)
     def on_duration_changed(self, dur: int) -> None:
@@ -500,6 +813,9 @@ class PlayerWindow(QMainWindow):
         if gen != self._media_gen:
             return
         if self.player.mediaStatus() != QMediaPlayer.MediaStatus.EndOfMedia:
+            return
+        # プレイリストに次があれば連続再生、なければ停止表示。
+        if self._advance_if_in_playlist():
             return
         self._do_stop()
         self.time_label.setText(f"00:00 / {format_ms(self.player.duration())} (終了)")
