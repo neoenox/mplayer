@@ -18,7 +18,7 @@ import re
 import sys
 
 from PySide6.QtCore import Qt, QTimer, QUrl, Slot
-from PySide6.QtGui import QAction, QDragEnterEvent, QDropEvent, QKeySequence
+from PySide6.QtGui import QAction, QActionGroup, QDragEnterEvent, QDropEvent, QKeySequence
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
@@ -43,7 +43,7 @@ SUPPORTED_FILTER = (
 )
 
 APP_NAME = "シンプル動画プレイヤー"
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 # 前回再生位置の保存先 (アプリと同じフォルダ)。上限100件。
 RESUME_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "resume.json")
@@ -132,16 +132,14 @@ class PlayerWindow(QMainWindow):
             Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom)
         self.subtitle_label.setWordWrap(True)
         self.subtitle_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-        self.subtitle_label.setStyleSheet(
-            "#subtitle_label { color: white; background-color: rgba(0, 0, 0, 150);"
-            " padding: 2px 10px; font-size: 18px; }")
         self.subtitle_label.setText("")
         self.subtitle_label.hide()
+        # 字幕の表示設定 (サイズpx / 位置: top|middle|bottom)
+        self._sub_size = 18
+        self._sub_pos = "bottom"
         # 映像の下端に配置 (addStretch で下寄せ)。背景は字幕行の高さのみ。
-        _overlay = QVBoxLayout(self.video)
-        _overlay.setContentsMargins(0, 0, 0, 14)
-        _overlay.addStretch(1)
-        _overlay.addWidget(self.subtitle_label)
+        self._overlay = QVBoxLayout(self.video)
+        self._rebuild_overlay()
 
         # --- UI ---
         # NOTE: 操作系ウィジェットはフォーカスを受け取らない (NoFocus)。
@@ -361,11 +359,30 @@ class PlayerWindow(QMainWindow):
         prev_act.triggered.connect(self.play_prev)
         self.addAction(prev_act)
 
+        sub_menu = self.menuBar().addMenu("字幕")
+        size_menu = sub_menu.addMenu("サイズ")
+        self._sub_size_group = QActionGroup(self)
+        for label, px in (("小 (14)", 14), ("中 (18)", 18), ("大 (26)", 26)):
+            a = QAction(label, self)
+            a.setCheckable(True)
+            a.setChecked(px == self._sub_size)
+            a.triggered.connect(lambda _=False, v=px: self.set_subtitle_size(v))
+            self._sub_size_group.addAction(a)
+            size_menu.addAction(a)
+        pos_menu = sub_menu.addMenu("位置")
+        self._sub_pos_group = QActionGroup(self)
+        for label, pos in (("下", "bottom"), ("中央", "middle"), ("上", "top")):
+            a = QAction(label, self)
+            a.setCheckable(True)
+            a.setChecked(pos == self._sub_pos)
+            a.triggered.connect(lambda _=False, v=pos: self.set_subtitle_pos(v))
+            self._sub_pos_group.addAction(a)
+            pos_menu.addAction(a)
+
         help_menu = self.menuBar().addMenu("ヘルプ")
         about_act = QAction("バージョン情報", self)
         about_act.triggered.connect(self.show_about)
         help_menu.addAction(about_act)
-
         self._is_fullscreen = False
         self._suppress_error_box = False
         # 遅延シークの世代管理。load()ごとに加算し、古いファイル向けの
@@ -485,6 +502,8 @@ class PlayerWindow(QMainWindow):
             "volume": self.vol.value(),
             "muted": self.mute_btn.isChecked(),
             "rate": self._rates[self._rate_idx],
+            "subtitle_size": self._sub_size,
+            "subtitle_pos": self._sub_pos,
             "playlist": [self.playlist.item(i).data(Qt.ItemDataRole.UserRole)
                          for i in range(self.playlist.count())],
         }
@@ -512,6 +531,8 @@ class PlayerWindow(QMainWindow):
             except Exception:
                 pass
             self.speed_btn.setText(f"速度 {rate}x")
+        self.set_subtitle_size(s.get("subtitle_size"))
+        self.set_subtitle_pos(s.get("subtitle_pos"))
         pl = s.get("playlist")
         if isinstance(pl, list):
             paths = [p for p in pl if isinstance(p, str)]
@@ -532,6 +553,39 @@ class PlayerWindow(QMainWindow):
             if os.path.isfile(cand):
                 return cand
         return None
+
+    # ---------- 字幕の表示設定 ----------
+    def _rebuild_overlay(self) -> None:
+        """位置設定に応じて字幕ラベルを再配置する。"""
+        while self._overlay.count():
+            self._overlay.takeAt(0)
+        pos = self._sub_pos
+        if pos == "top":
+            self._overlay.setContentsMargins(0, 14, 0, 0)
+            self._overlay.addWidget(self.subtitle_label)
+            self._overlay.addStretch(1)
+        elif pos == "middle":
+            self._overlay.setContentsMargins(0, 0, 0, 0)
+            self._overlay.addStretch(1)
+            self._overlay.addWidget(self.subtitle_label)
+            self._overlay.addStretch(1)
+        else:
+            self._overlay.setContentsMargins(0, 0, 0, 14)
+            self._overlay.addStretch(1)
+            self._overlay.addWidget(self.subtitle_label)
+        self.subtitle_label.setStyleSheet(
+            "#subtitle_label { color: white; background-color: rgba(0, 0, 0, 150);"
+            f" padding: 2px 10px; font-size: {self._sub_size}px; }}")
+
+    def set_subtitle_size(self, px: int) -> None:
+        if isinstance(px, int) and 8 <= px <= 72:
+            self._sub_size = px
+            self._rebuild_overlay()
+
+    def set_subtitle_pos(self, pos: str) -> None:
+        if pos in ("top", "middle", "bottom"):
+            self._sub_pos = pos
+            self._rebuild_overlay()
 
     def load_subtitles(self, path: str) -> bool:
         """SRT を読み込む。読み込めなければ False (クラッシュしない)。"""

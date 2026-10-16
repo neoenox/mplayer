@@ -4,6 +4,19 @@
 形式は [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に準拠し、
 バージョンは [Semantic Versioning](https://semver.org/lang/ja/) に従います。
 
+## [1.2.0] - 2026-10-16
+
+### Added
+- 字幕の表示設定: 「字幕」メニューからサイズ (小/中/大) と位置 (下/中央/上) を変更可能。
+  設定は `session.json` に保存され次回起動時に復元されます
+
+### Fixed
+- テストランナーが子プロセスの日本語出力を cp932 で復号して落ちる問題を修正 (UTF-8 に統一)
+
+### Changed
+- CI の GitHub Actions を最新メジャーに更新 (checkout@v7, setup-python@v7,
+  upload-artifact@v7, action-gh-release@v3)
+
 ## [1.1.0] - 2026-10-16
 
 ### Added
