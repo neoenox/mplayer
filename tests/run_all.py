@@ -10,8 +10,12 @@ import subprocess
 import sys
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-# 使用venvは切替可能 (P4クリーン検証用)。MPLAYER_PYTHON > --python > 既定.venv
-VENV_PY = os.environ.get("MPLAYER_PYTHON") or os.path.join(BASE, ".venv", "Scripts", "python.exe")
+# 使用venvは切替可能 (P4クリーン検証用 / CI)。MPLAYER_PYTHON > --python > 既定.venv。
+# .venv が無い環境 (CI等) では現行インタプリタにフォールバックする。
+_DEFAULT_PY = os.path.join(BASE, ".venv", "Scripts", "python.exe")
+VENV_PY = os.environ.get("MPLAYER_PYTHON") or _DEFAULT_PY
+if not os.path.exists(VENV_PY):
+    VENV_PY = sys.executable
 LOGDIR = os.path.join(BASE, "test_logs")
 
 STAGES = [
@@ -31,6 +35,23 @@ STAGES = [
 ]
 
 
+def _pyside_dir():
+    """使用インタプリタの PySide6 ディレクトリを解決する (venv/CI両対応)。"""
+    for py in (VENV_PY, sys.executable):
+        try:
+            out = subprocess.run(
+                [py, "-c", "import PySide6,os;print(os.path.dirname(PySide6.__file__))"],
+                capture_output=True, text=True, timeout=30)
+            d = (out.stdout or "").strip()
+            if d and os.path.isdir(d):
+                return d
+        except Exception:
+            pass
+    # フォールバック: .venv レイアウトを仮定
+    return os.path.normpath(os.path.join(os.path.dirname(VENV_PY), "..", "Lib",
+                                         "site-packages", "PySide6"))
+
+
 def env_info():
     lines = []
     try:
@@ -45,16 +66,13 @@ def env_info():
                 lines.append("pip: " + ln)
     except Exception as e:
         lines.append(f"pip: <err {e}>")
-    plug = os.path.join(os.path.dirname(VENV_PY), "..", "Lib", "site-packages",
-                            "PySide6", "plugins", "multimedia")
-    plug = os.path.normpath(plug)
+    pyside = _pyside_dir()
+    plug = os.path.join(pyside, "plugins", "multimedia")
     try:
         for f in sorted(os.listdir(plug)):
             lines.append(f"plugin: {f} {os.path.getsize(os.path.join(plug, f))}B")
     except Exception as e:
         lines.append(f"plugin: <err {e}>")
-    pyside = os.path.normpath(os.path.join(os.path.dirname(VENV_PY), "..", "Lib",
-                                      "site-packages", "PySide6"))
     for dll in ("avcodec-63.dll", "avformat-63.dll", "avutil-61.dll"):
         p = os.path.join(pyside, dll)
         lines.append(f"dll: {dll} {'%dB' % os.path.getsize(p) if os.path.exists(p) else 'MISSING'}")
@@ -71,7 +89,10 @@ def main():
     args = ap.parse_args()
     global VENV_PY
     if args.python:
-        VENV_PY = args.python
+        if os.path.exists(args.python):
+            VENV_PY = args.python
+        else:
+            print(f"warn: --python not found ({args.python}); using {sys.executable}", flush=True)
 
     os.makedirs(LOGDIR, exist_ok=True)
     total_p = total_f = total_s = 0
