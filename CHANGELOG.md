@@ -4,6 +4,17 @@
 形式は [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に準拠し、
 バージョンは [Semantic Versioning](https://semver.org/lang/ja/) に従います。
 
+## [1.8.0] - 2026-10-16
+
+### Added
+- 長時間再生の安定性テスト `tests/test_p19_stability.py`
+  - ウィンドウ生成/破棄の反復 (リーク検出: ハンドル・RSS・トップレベル数の伸び)
+  - 同一ファイルの繰り返しオープン、シーク連打、端シーク
+  - 連続再生の EOS 自動送り反復、字幕/全画面の反復切替
+
+### Notes
+- 挙動の変更はありません (テスト追加のみ)。
+
 ## [1.7.0] - 2026-10-16
 
 ### Added
