@@ -98,7 +98,7 @@ def collect_video_files(path: str, recursive: bool = True,
     return out
 
 APP_NAME = "シンプル動画プレイヤー"
-__version__ = "1.8.0"
+__version__ = "1.9.0"
 
 
 def _resource_path(rel: str) -> str:
@@ -296,6 +296,7 @@ SHORTCUTS = [
     ("↑ / ↓", "音量 +10 / -10"),
     ("M", "ミュート切替"),
     ("S", "字幕 ON / OFF"),
+    ("] / [", "再生速度 上げる / 下げる"),
     ("F / F11", "全画面切替"),
     ("Esc", "全画面を解除"),
     ("F1", "このヘルプを表示"),
@@ -615,6 +616,17 @@ class PlayerWindow(QMainWindow):
         prev_act.setShortcut(QKeySequence("Ctrl+Left"))
         prev_act.triggered.connect(self.play_prev)
         self.addAction(prev_act)
+
+        # 再生速度: ] で上げる / [ で下げる (端では据え置き)。
+        self.speed_up_act = QAction(self)
+        self.speed_up_act.setShortcut(QKeySequence(Qt.Key.Key_BracketRight))
+        self.speed_up_act.triggered.connect(self.speed_up)
+        self.addAction(self.speed_up_act)
+
+        self.speed_down_act = QAction(self)
+        self.speed_down_act.setShortcut(QKeySequence(Qt.Key.Key_BracketLeft))
+        self.speed_down_act.triggered.connect(self.speed_down)
+        self.addAction(self.speed_down_act)
 
         sub_menu = self.menuBar().addMenu("字幕")
         size_menu = sub_menu.addMenu("サイズ")
@@ -1141,6 +1153,23 @@ class PlayerWindow(QMainWindow):
     @Slot()
     def cycle_speed(self) -> None:
         self._rate_idx = (self._rate_idx + 1) % len(self._rates)
+        self._apply_rate()
+
+    def speed_up(self) -> None:
+        """再生速度を1段階上げる ([ は下げる)。端では据え置き。"""
+        self._step_speed(+1)
+
+    def speed_down(self) -> None:
+        self._step_speed(-1)
+
+    def _step_speed(self, delta: int) -> None:
+        idx = min(max(self._rate_idx + delta, 0), len(self._rates) - 1)
+        if idx == self._rate_idx:
+            return
+        self._rate_idx = idx
+        self._apply_rate()
+
+    def _apply_rate(self) -> None:
         rate = self._rates[self._rate_idx]
         try:
             self.player.setPlaybackRate(rate)

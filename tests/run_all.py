@@ -43,6 +43,7 @@ STAGES = [
     ("p17_help", "tests/test_p17_help.py", 60),
     ("p18_dnd_folder", "tests/test_p18_dnd_folder.py", 90),
     ("p19_stability", "tests/test_p19_stability.py", 300),
+    ("p20_speed", "tests/test_p20_speed.py", 90),
 ]
 
 

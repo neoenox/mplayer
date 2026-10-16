@@ -4,6 +4,16 @@
 形式は [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に準拠し、
 バージョンは [Semantic Versioning](https://semver.org/lang/ja/) に従います。
 
+## [1.9.0] - 2026-10-16
+
+### Added
+- 再生速度のショートカット: `]` で上げる / `[` で下げる (0.5 / 1.0 / 1.5 / 2.0 倍、
+  端では据え置き)。ヘルプ (F1) とREADMEにも追記
+- テスト `tests/test_p20_speed.py`
+
+### Changed
+- 速度適用処理を `_apply_rate` に集約 (`cycle_speed` / `speed_up` / `speed_down` で共用)
+
 ## [1.8.0] - 2026-10-16
 
 ### Added
