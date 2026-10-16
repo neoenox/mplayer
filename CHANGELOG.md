@@ -4,6 +4,14 @@
 形式は [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に準拠し、
 バージョンは [Semantic Versioning](https://semver.org/lang/ja/) に従います。
 
+## [1.11.0] - 2026-10-16
+
+### Added
+- 全画面時に操作系 (シーク/音量/ボタン列) とカーソルを自動で隠すように変更。
+  マウスを動かすと再表示 (既定 2.5秒で非表示)。映像領域のマウス移動も検知
+- 操作系を `controls` ウィジェットに集約 (全画面で一括表示/非表示)
+- テスト `tests/test_p22_fs_overlay.py`
+
 ## [1.10.0] - 2026-10-16
 
 ### Added
