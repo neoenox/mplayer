@@ -80,6 +80,8 @@ rem 生成物: dist\mplayer\mplayer.exe (ポータブルフォルダ, 約150MB)
 - PyInstaller でビルドし、QtMultimedia の ffmpeg プラグインと同梱 FFmpeg DLL
   (`avcodec-63` 等) を含めます
 - ビルド後に自己診断 (`--selftest`) を自動実行し、実際にデコードできるか検証します
+- アプリアイコン (`assets/app.ico`) と exe のバージョン情報も埋め込まれます
+  (バージョンは `main.py` の `__version__` から自動生成)
 - 手動診断: `dist\mplayer\mplayer.exe --selftest <動画> --selftest-out <結果.json>`
   (終了コード 0=成功, 1=失敗)
 

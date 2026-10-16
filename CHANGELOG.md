@@ -4,6 +4,14 @@
 形式は [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に準拠し、
 バージョンは [Semantic Versioning](https://semver.org/lang/ja/) に従います。
 
+## [1.3.0] - 2026-10-16
+
+### Added
+- アプリアイコン (`assets/app.ico`): ウィンドウ/タスクバーと配布 exe に適用。
+  生成は `tools/make_icon.py` (複数サイズの ICO を出力)
+- exe のバージョン情報 (FileVersion / ProductName など)。`main.py` の
+  `__version__` を唯一の情報源としてビルド時に生成
+
 ## [1.2.0] - 2026-10-16
 
 ### Added

@@ -6,10 +6,45 @@ QtMultimedia の ffmpeg バックエンドは PySide6 同梱の av*/sw* DLL に�
 フックが収集する。
 """
 import os
+import re
+import tempfile
 
 import PySide6
 
+_ROOT = os.path.abspath(globals().get("SPECPATH", os.getcwd()))
 _PYSIDE_DIR = os.path.dirname(os.path.abspath(PySide6.__file__))
+
+# main.py の __version__ を唯一の情報源として exe のバージョン情報を生成する
+with open(os.path.join(_ROOT, "main.py"), encoding="utf-8") as _f:
+    _VER = re.search(r'__version__\s*=\s*"([^"]+)"', _f.read()).group(1)
+_VER4 = ".".join((_VER.split(".") + ["0", "0", "0", "0"])[:4])
+_VERSION_FILE = os.path.join(tempfile.gettempdir(), f"mplayer_version_{_VER}.txt")
+with open(_VERSION_FILE, "w", encoding="utf-8") as _f:
+    _f.write(f"""VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers=({_VER4.replace('.', ', ')}),
+    prodvers=({_VER4.replace('.', ', ')}),
+    mask=0x3f, flags=0x0, OS=0x40004, fileType=0x1, subtype=0x0, date=(0, 0)
+  ),
+  kids=[
+    StringFileInfo([
+      StringTable('040904B0', [
+        StringStruct('CompanyName', 'mplayer'),
+        StringStruct('FileDescription', 'シンプル動画プレイヤー'),
+        StringStruct('FileVersion', '{_VER}'),
+        StringStruct('OriginalFilename', 'mplayer.exe'),
+        StringStruct('ProductName', 'シンプル動画プレイヤー'),
+        StringStruct('ProductVersion', '{_VER}'),
+      ])
+    ]),
+    VarFileInfo([VarStruct('Translation', [1033, 1200])])
+  ]
+)
+""")
+
+# 同梱リソース (アイコン)
+_DATAS = [(os.path.join(_ROOT, "assets", "app.ico"), "assets")]
+_ICON = os.path.join(_ROOT, "assets", "app.ico")
 
 # PySide6 直下の FFmpeg 依存 DLL (avcodec/avformat/avutil/swresample/swscale)
 _FFMPEG_DLLS = [
@@ -39,7 +74,7 @@ a = Analysis(
     ["main.py"],
     pathex=[],
     binaries=binaries,
-    datas=[],
+    datas=_DATAS,
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -62,6 +97,8 @@ exe = EXE(
     upx=False,
     console=False,
     disable_windowed_traceback=False,
+    icon=_ICON,
+    version=_VERSION_FILE,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,

@@ -18,7 +18,14 @@ import re
 import sys
 
 from PySide6.QtCore import Qt, QTimer, QUrl, Slot
-from PySide6.QtGui import QAction, QActionGroup, QDragEnterEvent, QDropEvent, QKeySequence
+from PySide6.QtGui import (
+    QAction,
+    QActionGroup,
+    QDragEnterEvent,
+    QDropEvent,
+    QIcon,
+    QKeySequence,
+)
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
@@ -43,7 +50,16 @@ SUPPORTED_FILTER = (
 )
 
 APP_NAME = "シンプル動画プレイヤー"
-__version__ = "1.2.0"
+__version__ = "1.3.0"
+
+
+def _resource_path(rel: str) -> str:
+    """同梱リソースのパスを解決する (PyInstaller の _MEIPASS にも対応)。"""
+    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, rel)
+
+
+ICON_PATH = _resource_path(os.path.join("assets", "app.ico"))
 
 # 前回再生位置の保存先 (アプリと同じフォルダ)。上限100件。
 RESUME_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "resume.json")
@@ -112,6 +128,8 @@ class PlayerWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle(f"{APP_NAME} v{__version__}")
+        if os.path.isfile(ICON_PATH):
+            self.setWindowIcon(QIcon(ICON_PATH))
         self.resize(960, 600)
         self.setAcceptDrops(True)
 
@@ -1022,6 +1040,8 @@ def main(argv: list[str] | None = None) -> int:
     if "--selftest" in args:
         return _run_selftest(args)
     app = QApplication(sys.argv if argv is None else argv)
+    if os.path.isfile(ICON_PATH):
+        app.setWindowIcon(QIcon(ICON_PATH))
     w = PlayerWindow()
     w.restore_session()
     w.show()
