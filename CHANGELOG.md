@@ -4,6 +4,17 @@
 形式は [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に準拠し、
 バージョンは [Semantic Versioning](https://semver.org/lang/ja/) に従います。
 
+## [1.5.0] - 2026-10-16
+
+### Added
+- 字幕の文字コード自動判定: BOM 付き UTF-8 / UTF-8 / Shift_JIS(CP932) / UTF-16 を
+  順に判定。日本語 SRT の文字化けを解消
+- 「字幕」→「文字コード」メニュー (自動 / UTF-8 / Shift_JIS)。指定が合わない場合は
+  自動判定にフォールバックし、切替時は現在の字幕を再読込
+- 字幕の縁取り表示 (既定 ON)。「字幕」→「縁取り」で切替。文字サイズに追従して太さを調整
+- 上記設定をセッション (`session.json`) に保存・復元
+- テスト `tests/test_p16_subtitle_enc.py`
+
 ## [1.4.0] - 2026-10-16
 
 ### Added

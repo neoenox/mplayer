@@ -17,14 +17,20 @@ import os
 import re
 import sys
 
-from PySide6.QtCore import Qt, QTimer, QUrl, Slot
+from PySide6.QtCore import QPointF, Qt, QTimer, QUrl, Slot
 from PySide6.QtGui import (
     QAction,
     QActionGroup,
+    QColor,
     QDragEnterEvent,
     QDropEvent,
     QIcon,
     QKeySequence,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QTextLayout,
+    QTextOption,
 )
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
@@ -50,7 +56,7 @@ SUPPORTED_FILTER = (
 )
 
 APP_NAME = "シンプル動画プレイヤー"
-__version__ = "1.4.0"
+__version__ = "1.5.0"
 
 
 def _resource_path(rel: str) -> str:
@@ -124,6 +130,121 @@ def parse_srt(text: str) -> list[tuple[int, int, str]]:
     return cues
 
 
+# 字幕の文字コード選択肢。auto は BOM/UTF-8/CP932 を順に試す。
+SUB_ENCODINGS = ("auto", "utf-8", "cp932")
+_ENCODING_LABELS = {"auto": "自動", "utf-8": "UTF-8", "cp932": "Shift_JIS"}
+
+
+def decode_subtitle_bytes(data: bytes, encoding: str = "auto") -> tuple[str, str]:
+    """字幕のバイト列をテキストへ復号する。(本文, 採用した文字コード) を返す。
+
+    日本語 SRT は UTF-8 と Shift_JIS(CP932) が混在するため、
+    encoding="auto" では BOM → UTF-8(厳密) → CP932 の順に判定する。
+    明示指定が失敗した場合も自動判定へフォールバックする (化けより安全)。
+    """
+    if encoding in ("utf-8", "cp932"):
+        try:
+            return data.decode(encoding), encoding
+        except (UnicodeDecodeError, LookupError):
+            pass
+
+    if data.startswith(b"\xef\xbb\xbf"):
+        return data.decode("utf-8-sig", errors="replace"), "utf-8"
+    if data.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return data.decode("utf-16", errors="replace"), "utf-16"
+
+    for enc in ("utf-8", "cp932"):
+        try:
+            return data.decode(enc), enc
+        except UnicodeDecodeError:
+            continue
+    return data.decode("utf-8", errors="replace"), "utf-8"
+
+
+class SubtitleLabel(QLabel):
+    """縁取り(アウトライン)付きの字幕ラベル。
+
+    Qt の QLabel は文字の縁取りができないため、QTextLayout で折返しを計算し、
+    QPainterPath で縁取り(太い線)と塗り(白)を重ねて描画する。
+    背景 (スタイルシートの background-color) は PE_Widget で描く。
+    """
+
+    INSET_X = 10.0
+    INSET_Y = 2.0
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._outline = True
+        self._outline_width = 3.0
+        self._outline_color = QColor(0, 0, 0)
+        self._fill_color = QColor(255, 255, 255)
+        # 背景 (半透明の黒帯)。縁取りラベル側で描画する (QSS は使わない)。
+        self._bg_color = QColor(0, 0, 0, 150)
+
+    def set_outline(self, enabled: bool, width: float | None = None) -> None:
+        self._outline = bool(enabled)
+        if width is not None:
+            self._outline_width = max(0.0, float(width))
+        self.update()
+
+    def outline(self) -> bool:
+        return self._outline
+
+    def paintEvent(self, event) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        p.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+        p.fillRect(self.rect(), self._bg_color)
+
+        text = self.text()
+        if not text:
+            p.end()
+            return
+
+        font = self.font()
+        avail = max(1.0, self.width() - 2 * self.INSET_X)
+        layout = QTextLayout(text, font)
+        option = QTextOption()
+        option.setWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
+        option.setAlignment(self.alignment())
+        layout.setTextOption(option)
+        layout.beginLayout()
+        lines = []
+        height = 0.0
+        while True:
+            line = layout.createLine()
+            if not line.isValid():
+                break
+            line.setLineWidth(avail)
+            line.setPosition(QPointF(0.0, height))
+            height += line.height()
+            lines.append(line)
+        layout.endLayout()
+
+        top = max(self.INSET_Y,
+                  (self.height() - height) / 2.0 + self.INSET_Y / 2.0)
+        for line in lines:
+            snippet = text[line.textStart(): line.textStart() + line.textLength()]
+            if not snippet.strip():
+                continue
+            path = QPainterPath()
+            path.addText(
+                QPointF(self.INSET_X + line.x(),
+                        top + line.y() + line.ascent()), font, snippet)
+            if self._outline and self._outline_width > 0:
+                pen = QPen(self._outline_color)
+                pen.setWidthF(self._outline_width * 2.0)
+                pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+                pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+                p.setPen(pen)
+                p.setBrush(Qt.BrushStyle.NoBrush)
+                p.drawPath(path)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(self._fill_color)
+            p.drawPath(path)
+        p.end()
+
+
 class PlayerWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -144,7 +265,7 @@ class PlayerWindow(QMainWindow):
 
         # 字幕オーバーレイ: 映像の上に重ねる。マウスは透過させ、
         # ダブルクリックでの全画面切替を妨げない。
-        self.subtitle_label = QLabel(self.video)
+        self.subtitle_label = SubtitleLabel(self.video)
         self.subtitle_label.setObjectName("subtitle_label")
         self.subtitle_label.setAlignment(
             Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom)
@@ -152,9 +273,11 @@ class PlayerWindow(QMainWindow):
         self.subtitle_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self.subtitle_label.setText("")
         self.subtitle_label.hide()
-        # 字幕の表示設定 (サイズpx / 位置: top|middle|bottom)
+        # 字幕の表示設定 (サイズpx / 位置: top|middle|bottom / 縁取り / 文字コード)
         self._sub_size = 18
         self._sub_pos = "bottom"
+        self._sub_outline = True
+        self._sub_encoding = "auto"
         # 映像の下端に配置 (addStretch で下寄せ)。背景は字幕行の高さのみ。
         self._overlay = QVBoxLayout(self.video)
         self._rebuild_overlay()
@@ -397,6 +520,22 @@ class PlayerWindow(QMainWindow):
             self._sub_pos_group.addAction(a)
             pos_menu.addAction(a)
 
+        self._sub_outline_act = QAction("縁取り", self)
+        self._sub_outline_act.setCheckable(True)
+        self._sub_outline_act.setChecked(self._sub_outline)
+        self._sub_outline_act.triggered.connect(self.set_subtitle_outline)
+        sub_menu.addAction(self._sub_outline_act)
+
+        enc_menu = sub_menu.addMenu("文字コード")
+        self._sub_enc_group = QActionGroup(self)
+        for enc in SUB_ENCODINGS:
+            a = QAction(_ENCODING_LABELS[enc], self)
+            a.setCheckable(True)
+            a.setChecked(enc == self._sub_encoding)
+            a.triggered.connect(lambda _=False, v=enc: self.set_subtitle_encoding(v))
+            self._sub_enc_group.addAction(a)
+            enc_menu.addAction(a)
+
         help_menu = self.menuBar().addMenu("ヘルプ")
         about_act = QAction("バージョン情報", self)
         about_act.triggered.connect(self.show_about)
@@ -419,6 +558,9 @@ class PlayerWindow(QMainWindow):
         self._cues: list[tuple[int, int, str]] = []
         self._cue_starts: list[int] = []
         self._subs_enabled = False
+        # 現在読み込んでいる字幕ファイル (文字コード切替時の再読込に使う)
+        self._current_sub_path: str | None = None
+        self._sub_used_encoding = ""
         # 全画面時にプレイリストの表示状態を退避
         self._dock_visible_before_fs = False
 
@@ -522,6 +664,8 @@ class PlayerWindow(QMainWindow):
             "rate": self._rates[self._rate_idx],
             "subtitle_size": self._sub_size,
             "subtitle_pos": self._sub_pos,
+            "subtitle_outline": self._sub_outline,
+            "subtitle_encoding": self._sub_encoding,
             "playlist": [self.playlist.item(i).data(Qt.ItemDataRole.UserRole)
                          for i in range(self.playlist.count())],
         }
@@ -551,6 +695,18 @@ class PlayerWindow(QMainWindow):
             self.speed_btn.setText(f"速度 {rate}x")
         self.set_subtitle_size(s.get("subtitle_size"))
         self.set_subtitle_pos(s.get("subtitle_pos"))
+        outline = s.get("subtitle_outline")
+        if isinstance(outline, bool):
+            self.set_subtitle_outline(outline)
+        enc = s.get("subtitle_encoding")
+        if enc in SUB_ENCODINGS:
+            self._sub_encoding = enc
+            act = getattr(self, "_sub_enc_group", None)
+            if act is not None:
+                for a in act.actions():
+                    if a.text() == _ENCODING_LABELS[enc]:
+                        a.setChecked(True)
+                        break
         pl = s.get("playlist")
         if isinstance(pl, list):
             paths = [p for p in pl if isinstance(p, str)]
@@ -592,8 +748,11 @@ class PlayerWindow(QMainWindow):
             self._overlay.addStretch(1)
             self._overlay.addWidget(self.subtitle_label)
         self.subtitle_label.setStyleSheet(
-            "#subtitle_label { color: white; background-color: rgba(0, 0, 0, 150);"
+            "#subtitle_label { color: white;"
             f" padding: 2px 10px; font-size: {self._sub_size}px; }}")
+        # 縁取り幅は文字サイズに追従させる (大きい文字ほど太く)。
+        self.subtitle_label.set_outline(self._sub_outline,
+                                        max(1.5, self._sub_size * 0.15))
 
     def set_subtitle_size(self, px: int) -> None:
         if isinstance(px, int) and 8 <= px <= 72:
@@ -605,17 +764,42 @@ class PlayerWindow(QMainWindow):
             self._sub_pos = pos
             self._rebuild_overlay()
 
-    def load_subtitles(self, path: str) -> bool:
+    def set_subtitle_outline(self, enabled: bool) -> None:
+        self._sub_outline = bool(enabled)
+        act = getattr(self, "_sub_outline_act", None)
+        if act is not None and act.isChecked() != self._sub_outline:
+            act.setChecked(self._sub_outline)
+        self.subtitle_label.set_outline(
+            self._sub_outline, max(1.5, self._sub_size * 0.15))
+
+    def set_subtitle_encoding(self, enc: str) -> None:
+        """文字コード指定。auto 以外は再読込して反映する。"""
+        if enc not in SUB_ENCODINGS:
+            return
+        self._sub_encoding = enc
+        act = getattr(self, "_sub_enc_group", None)
+        if act is not None:
+            for a in act.actions():
+                if a.text() == _ENCODING_LABELS[enc]:
+                    a.setChecked(True)
+                    break
+        if self._current_sub_path:
+            self.load_subtitles(self._current_sub_path)
+
+    def load_subtitles(self, path: str, encoding: str | None = None) -> bool:
         """SRT を読み込む。読み込めなければ False (クラッシュしない)。"""
         try:
-            with open(path, encoding="utf-8-sig", errors="replace") as f:
-                text = f.read()
+            with open(path, "rb") as f:
+                data = f.read()
         except Exception:
             return False
+        text, used = decode_subtitle_bytes(data, encoding or self._sub_encoding)
         cues = parse_srt(text)
         self._cues = cues
         self._cue_starts = [c[0] for c in cues]
         self._subs_enabled = bool(cues)
+        self._current_sub_path = path if cues else None
+        self._sub_used_encoding = used if cues else ""
         self.subs_btn.setChecked(bool(cues))
         self.subs_btn.setText("字幕 ON" if cues else "字幕")
         self.update_subtitle(self.player.position())
@@ -625,6 +809,8 @@ class PlayerWindow(QMainWindow):
         self._cues = []
         self._cue_starts = []
         self._subs_enabled = False
+        self._current_sub_path = None
+        self._sub_used_encoding = ""
         self.subtitle_label.setText("")
         self.subtitle_label.hide()
         self.subs_btn.setChecked(False)
