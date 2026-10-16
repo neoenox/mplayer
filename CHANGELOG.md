@@ -4,6 +4,13 @@
 形式は [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に準拠し、
 バージョンは [Semantic Versioning](https://semver.org/lang/ja/) に従います。
 
+## [1.6.0] - 2026-10-16
+
+### Added
+- ヘルプ (ショートカット一覧) ダイアログ。「ヘルプ」→「ショートカット一覧」または
+  F1 で表示。キー操作・マウス操作・使い方のヒントを掲載 (非モーダル・使い回し)
+- テスト `tests/test_p17_help.py`
+
 ## [1.5.0] - 2026-10-16
 
 ### Added

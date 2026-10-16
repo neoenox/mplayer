@@ -40,6 +40,7 @@ STAGES = [
     ("p14_icon", "tests/test_p14_icon.py", 60),
     ("p15_installer", "tests/test_p15_installer.py", 60),
     ("p16_subtitle_enc", "tests/test_p16_subtitle_enc.py", 90),
+    ("p17_help", "tests/test_p17_help.py", 60),
 ]
 
 
