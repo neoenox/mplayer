@@ -1,0 +1,3 @@
+# Build-only dependencies (not needed to run the app).
+# Windows distribution packaging.
+pyinstaller>=6.10,<7

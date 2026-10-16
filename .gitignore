@@ -4,3 +4,5 @@ __pycache__/
 test_logs/
 tmp_p4/
 resume.json
+build/
+dist/
