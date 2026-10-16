@@ -42,6 +42,9 @@ SUPPORTED_FILTER = (
     "動画ファイル (*.mp4 *.mkv *.avi *.mov *.webm *.m4v *.mpg *.mpeg *.wmv);;すべてのファイル (*.*)"
 )
 
+APP_NAME = "シンプル動画プレイヤー"
+__version__ = "1.0.0"
+
 # 前回再生位置の保存先 (アプリと同じフォルダ)。上限100件。
 RESUME_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "resume.json")
 RESUME_MAX_ENTRIES = 100
@@ -102,7 +105,7 @@ def parse_srt(text: str) -> list[tuple[int, int, str]]:
 class PlayerWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("シンプル動画プレイヤー")
+        self.setWindowTitle(f"{APP_NAME} v{__version__}")
         self.resize(960, 600)
         self.setAcceptDrops(True)
 
@@ -352,6 +355,11 @@ class PlayerWindow(QMainWindow):
         prev_act.triggered.connect(self.play_prev)
         self.addAction(prev_act)
 
+        help_menu = self.menuBar().addMenu("ヘルプ")
+        about_act = QAction("バージョン情報", self)
+        about_act.triggered.connect(self.show_about)
+        help_menu.addAction(about_act)
+
         self._is_fullscreen = False
         self._suppress_error_box = False
         # 遅延シークの世代管理。load()ごとに加算し、古いファイル向けの
@@ -401,7 +409,7 @@ class PlayerWindow(QMainWindow):
         auto_sub = self._sibling_subtitle(self._current_path)
         if auto_sub:
             self.load_subtitles(auto_sub)
-        self.setWindowTitle(f"シンプル動画プレイヤー - {os.path.basename(path)}")
+        self.setWindowTitle(f"{APP_NAME} v{__version__} - {os.path.basename(path)}")
         self.player.play()
         return True
 
@@ -736,6 +744,14 @@ class PlayerWindow(QMainWindow):
             if self._dock_visible_before_fs:
                 self.pl_dock.show()
             self.fs_btn.setText("全画面")
+
+    @Slot()
+    def show_about(self) -> None:
+        QMessageBox.about(
+            self, "バージョン情報",
+            f"{APP_NAME} v{__version__}\n\n"
+            "最小限のローカル動画プレイヤー (Windows / PySide6)。\n"
+            "再生: PySide6同梱のFFmpegバックエンド。外部FFmpeg不要。")
 
     def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802
         self.toggle_fullscreen()
