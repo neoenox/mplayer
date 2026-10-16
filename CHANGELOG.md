@@ -4,6 +4,15 @@
 形式は [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に準拠し、
 バージョンは [Semantic Versioning](https://semver.org/lang/ja/) に従います。
 
+## [1.7.0] - 2026-10-16
+
+### Added
+- フォルダのドラッグ&ドロップ対応。中の動画を再帰的 (隠しフォルダ除く) に名前順で
+  収集し、まとめてプレイリストへ追加して先頭を再生 (上限 500 件)
+- `.srt` 単体ドロップは字幕として読み込み、複数 URL の同時ドロップにも対応
+- `collect_video_files` / `is_video_file` / `VIDEO_EXTS` を公開ヘルパー化
+- テスト `tests/test_p18_dnd_folder.py`
+
 ## [1.6.0] - 2026-10-16
 
 ### Added
