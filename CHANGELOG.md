@@ -4,6 +4,16 @@
 形式は [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に準拠し、
 バージョンは [Semantic Versioning](https://semver.org/lang/ja/) に従います。
 
+## [1.15.0] - 2026-10-17
+
+### Added
+- テスト `tests/test_p26_seek_keys.py` (← / → の 5秒シーク: 累積・前後端の clamp・
+  未ロード時・全画面・ドキュメント整合)
+
+### Fixed
+- README の「シークバーにフォーカスして矢印キーで1秒」という記述を実装に合わせて修正。
+  `←` / `→` はウィンドウ全体で 5秒シークとして動作します
+
 ## [1.14.0] - 2026-10-17
 
 ### Added
