@@ -4,6 +4,17 @@
 形式は [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に準拠し、
 バージョンは [Semantic Versioning](https://semver.org/lang/ja/) に従います。
 
+## [1.12.0] - 2026-10-16
+
+### Added
+- プレイリストの並べ替え: リスト上でドラッグ (内部移動) または
+  パネルの「上へ」「下へ」ボタンで 1 つずつ移動
+- 並び順をセッションに保存し、次回起動時に同じ順序で復元
+- テスト `tests/test_p23_playlist_reorder.py`
+
+### Changed
+- セッション保存は `playlist_paths()` (表示順) を経由するよう整理
+
 ## [1.11.0] - 2026-10-16
 
 ### Added
