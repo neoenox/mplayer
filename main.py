@@ -99,7 +99,7 @@ def collect_video_files(path: str, recursive: bool = True,
     return out
 
 APP_NAME = "シンプル動画プレイヤー"
-__version__ = "1.12.0"
+__version__ = "1.13.0"
 
 
 def _resource_path(rel: str) -> str:
@@ -249,6 +249,7 @@ class SubtitleLabel(QLabel):
         self._font_family = ""
         # 背景 (半透明の黒帯)。縁取りラベル側で描画する (QSS は使わない)。
         self._bg_color = QColor(0, 0, 0, 150)
+        self._bg_enabled = True
 
     def set_outline(self, enabled: bool, width: float | None = None) -> None:
         self._outline = bool(enabled)
@@ -280,11 +281,20 @@ class SubtitleLabel(QLabel):
     def font_family(self) -> str:
         return self._font_family
 
+    def set_bg_enabled(self, enabled: bool) -> None:
+        """背景の半透明帯を表示するかどうか。"""
+        self._bg_enabled = bool(enabled)
+        self.update()
+
+    def bg_enabled(self) -> bool:
+        return self._bg_enabled
+
     def paintEvent(self, event) -> None:
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         p.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
-        p.fillRect(self.rect(), self._bg_color)
+        if self._bg_enabled:
+            p.fillRect(self.rect(), self._bg_color)
 
         text = self.text()
         if not text:
@@ -360,6 +370,7 @@ HELP_NOTES = [
     "全画面では操作系が自動で隠れます。マウスを動かすと再表示されます (Esc で解除)。",
     "字幕の文字コードは自動判定します (「字幕」→「文字コード」で手動指定も可能)。",
     "「字幕」メニューからサイズ・位置・縁取り・文字色・フォントを変更できます。",
+    "「字幕」メニューの「背景帯」で字幕の後ろの黒帯を消せます (既定は表示)。",
     "プレイリストはドラッグ、または「上へ」「下へ」で並べ替えできます (順序は保存されます)。",
     "終了時に音量・速度・プレイリスト・字幕設定を保存し、次回起動時に復元します。",
     "動画と同じフォルダに同名の .srt があれば、自動で読み込みます。",
@@ -444,6 +455,7 @@ class PlayerWindow(QMainWindow):
         self._sub_size = 18
         self._sub_pos = "bottom"
         self._sub_outline = True
+        self._sub_bg = True
         self._sub_encoding = "auto"
         self._sub_color = (255, 255, 255)
         self._sub_font = ""
@@ -731,6 +743,12 @@ class PlayerWindow(QMainWindow):
         self._sub_outline_act.triggered.connect(self.set_subtitle_outline)
         sub_menu.addAction(self._sub_outline_act)
 
+        self._sub_bg_act = QAction("背景帯", self)
+        self._sub_bg_act.setCheckable(True)
+        self._sub_bg_act.setChecked(self._sub_bg)
+        self._sub_bg_act.triggered.connect(self.set_subtitle_bg)
+        sub_menu.addAction(self._sub_bg_act)
+
         enc_menu = sub_menu.addMenu("文字コード")
         self._sub_enc_group = QActionGroup(self)
         for enc in SUB_ENCODINGS:
@@ -903,6 +921,7 @@ class PlayerWindow(QMainWindow):
             "subtitle_size": self._sub_size,
             "subtitle_pos": self._sub_pos,
             "subtitle_outline": self._sub_outline,
+            "subtitle_bg": self._sub_bg,
             "subtitle_encoding": self._sub_encoding,
             "subtitle_color": list(self._sub_color),
             "subtitle_font": self._sub_font,
@@ -937,6 +956,9 @@ class PlayerWindow(QMainWindow):
         outline = s.get("subtitle_outline")
         if isinstance(outline, bool):
             self.set_subtitle_outline(outline)
+        bg = s.get("subtitle_bg")
+        if isinstance(bg, bool):
+            self.set_subtitle_bg(bg)
         enc = s.get("subtitle_encoding")
         if enc in SUB_ENCODINGS:
             self._sub_encoding = enc
@@ -998,6 +1020,7 @@ class PlayerWindow(QMainWindow):
         # 縁取り幅は文字サイズに追従させる (大きい文字ほど太く)。
         self.subtitle_label.set_outline(self._sub_outline,
                                         max(1.5, self._sub_size * 0.15))
+        self.subtitle_label.set_bg_enabled(self._sub_bg)
 
     def set_subtitle_size(self, px: int) -> None:
         if isinstance(px, int) and 8 <= px <= 72:
@@ -1016,6 +1039,13 @@ class PlayerWindow(QMainWindow):
             act.setChecked(self._sub_outline)
         self.subtitle_label.set_outline(
             self._sub_outline, max(1.5, self._sub_size * 0.15))
+
+    def set_subtitle_bg(self, enabled: bool) -> None:
+        self._sub_bg = bool(enabled)
+        act = getattr(self, "_sub_bg_act", None)
+        if act is not None and act.isChecked() != self._sub_bg:
+            act.setChecked(self._sub_bg)
+        self.subtitle_label.set_bg_enabled(self._sub_bg)
 
     def set_subtitle_color(self, rgb) -> None:
         """字幕の文字色。既定 (白) 以外は縁取り色を自動で反転する。"""

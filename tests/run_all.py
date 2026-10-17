@@ -47,6 +47,7 @@ STAGES = [
     ("p21_subtitle_color", "tests/test_p21_subtitle_color.py", 90),
     ("p22_fs_overlay", "tests/test_p22_fs_overlay.py", 90),
     ("p23_playlist_reorder", "tests/test_p23_playlist_reorder.py", 90),
+    ("p24_subtitle_bg", "tests/test_p24_subtitle_bg.py", 90),
 ]
 
 
