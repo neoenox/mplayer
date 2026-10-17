@@ -4,6 +4,13 @@
 形式は [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に準拠し、
 バージョンは [Semantic Versioning](https://semver.org/lang/ja/) に従います。
 
+## [1.13.0] - 2026-10-17
+
+### Added
+- 字幕の「背景帯」ON/OFF 切替 (字幕メニュー)。OFF で字幕後ろの半透明黒帯を消せる
+- 背景帯の設定をセッションに保存し、次回起動時に復元
+- テスト `tests/test_p24_subtitle_bg.py`
+
 ## [1.12.0] - 2026-10-16
 
 ### Added
