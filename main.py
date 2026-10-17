@@ -101,7 +101,7 @@ def collect_video_files(path: str, recursive: bool = True,
     return out
 
 APP_NAME = "シンプル動画プレイヤー"
-__version__ = "1.15.0"
+__version__ = "1.16.0"
 
 
 def _resource_path(rel: str) -> str:
@@ -376,7 +376,7 @@ HELP_NOTES = [
     "「字幕」メニューからサイズ・位置・縁取り・文字色・フォントを変更できます。",
     "「字幕」メニューの「背景帯」で字幕の後ろの黒帯を消せます (既定は表示)。",
     "プレイリストはドラッグ、または「上へ」「下へ」で並べ替えできます (順序は保存されます)。",
-    "終了時に音量・速度・プレイリスト・字幕設定を保存し、次回起動時に復元します。",
+    "終了時に音量・速度・プレイリスト・字幕設定 (表示 ON/OFF 含む) を保存し、次回起動時に復元します。",
     "動画と同じフォルダに同名の .srt があれば、自動で読み込みます。",
 ]
 
@@ -818,6 +818,8 @@ class PlayerWindow(QMainWindow):
         self._cues: list[tuple[int, int, str]] = []
         self._cue_starts: list[int] = []
         self._subs_enabled = False
+        # 字幕を表示するかどうかの好み (動画ごとではなく、次回起動時にも引き継ぐ)。
+        self._subs_pref = True
         # 現在読み込んでいる字幕ファイル (文字コード切替時の再読込に使う)
         self._current_sub_path: str | None = None
         self._sub_used_encoding = ""
@@ -926,6 +928,7 @@ class PlayerWindow(QMainWindow):
             "subtitle_pos": self._sub_pos,
             "subtitle_outline": self._sub_outline,
             "subtitle_bg": self._sub_bg,
+            "subtitles_enabled": self._subs_pref,
             "subtitle_encoding": self._sub_encoding,
             "subtitle_color": list(self._sub_color),
             "subtitle_font": self._sub_font,
@@ -963,6 +966,9 @@ class PlayerWindow(QMainWindow):
         bg = s.get("subtitle_bg")
         if isinstance(bg, bool):
             self.set_subtitle_bg(bg)
+        subs_on = s.get("subtitles_enabled")
+        if isinstance(subs_on, bool):
+            self.set_subtitles_pref(subs_on)
         enc = s.get("subtitle_encoding")
         if enc in SUB_ENCODINGS:
             self._sub_encoding = enc
@@ -1095,6 +1101,15 @@ class PlayerWindow(QMainWindow):
         if self._current_sub_path:
             self.load_subtitles(self._current_sub_path)
 
+    def set_subtitles_pref(self, enabled: bool) -> None:
+        """字幕を表示するかどうかの好み。読み込み済みの cues にも即反映する。"""
+        self._subs_pref = bool(enabled)
+        if self._cues:
+            self._subs_enabled = self._subs_pref
+            self.subs_btn.setChecked(self._subs_pref)
+            self.subs_btn.setText("字幕 ON" if self._subs_pref else "字幕")
+            self.update_subtitle(self.player.position())
+
     def load_subtitles(self, path: str, encoding: str | None = None) -> bool:
         """SRT を読み込む。読み込めなければ False (クラッシュしない)。"""
         try:
@@ -1106,11 +1121,13 @@ class PlayerWindow(QMainWindow):
         cues = parse_srt(text)
         self._cues = cues
         self._cue_starts = [c[0] for c in cues]
-        self._subs_enabled = bool(cues)
+        # 表示するかどうかは「字幕を表示する」好みに従う (OFF でも cues は保持)。
+        show = bool(cues) and self._subs_pref
+        self._subs_enabled = show
         self._current_sub_path = path if cues else None
         self._sub_used_encoding = used if cues else ""
         self.subs_btn.setChecked(bool(cues))
-        self.subs_btn.setText("字幕 ON" if cues else "字幕")
+        self.subs_btn.setText("字幕 ON" if show else "字幕")
         self.update_subtitle(self.player.position())
         return bool(cues)
 
@@ -1130,6 +1147,8 @@ class PlayerWindow(QMainWindow):
         # チェック状態はクリックで既に反転している。ONにしたい時に字幕が
         # 無ければ、同名 .srt の自動読み込みを試みる。
         want_on = self.subs_btn.isChecked()
+        # ユーザーの明示操作なので好みも更新する (自動読込側で尊重される)。
+        self._subs_pref = want_on
         if want_on and not self._cues:
             auto = self._sibling_subtitle(self._current_path)
             if not (auto and self.load_subtitles(auto)):

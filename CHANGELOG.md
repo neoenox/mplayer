@@ -4,6 +4,14 @@
 形式は [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に準拠し、
 バージョンは [Semantic Versioning](https://semver.org/lang/ja/) に従います。
 
+## [1.16.0] - 2026-10-17
+
+### Added
+- 字幕の表示 ON/OFF を好みとして保存し、次回起動時にも引き継ぐように変更。
+  OFF のまま .srt 付き動画を開いた場合は cues のみ読み込み、表示はしません
+  (「字幕 ON」で再読込なしに表示)
+- テスト `tests/test_p27_subtitle_pref.py`
+
 ## [1.15.0] - 2026-10-17
 
 ### Added
