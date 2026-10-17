@@ -5,6 +5,7 @@ test_logs/
 tmp_p4/
 tmp_p23/
 tmp_p24/
+tmp_p25/
 resume.json
 session.json
 build/

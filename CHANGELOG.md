@@ -4,6 +4,14 @@
 形式は [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に準拠し、
 バージョンは [Semantic Versioning](https://semver.org/lang/ja/) に従います。
 
+## [1.14.0] - 2026-10-17
+
+### Added
+- 映像の上でマウスホイールを回すと音量を 5 ずつ調整 (上限/下限で停止)
+- ミュート中にホイールを回すとミュートを解除して音量を反映
+- 全画面でもホイール操作が効き、その際は操作系を再表示
+- テスト `tests/test_p25_wheel_volume.py`
+
 ## [1.13.0] - 2026-10-17
 
 ### Added
