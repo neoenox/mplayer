@@ -63,6 +63,8 @@ VIDEO_EXTS = {".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v", ".mpg", ".mpeg", 
 SUBTITLE_EXTS = {".srt"}
 # フォルダをドロップした時に収集する最大件数 (巨大フォルダ対策)。
 DROP_MAX_FILES = 500
+# 映像上のマウスホイール1回で変える音量 (0-100)。
+VOLUME_STEP = 5
 
 
 def is_video_file(path: str) -> bool:
@@ -99,7 +101,7 @@ def collect_video_files(path: str, recursive: bool = True,
     return out
 
 APP_NAME = "シンプル動画プレイヤー"
-__version__ = "1.13.0"
+__version__ = "1.14.0"
 
 
 def _resource_path(rel: str) -> str:
@@ -362,12 +364,14 @@ SHORTCUTS = [
 
 MOUSE_HELP = [
     ("ダブルクリック", "全画面切替"),
+    ("ホイール (映像上)", f"音量を {VOLUME_STEP} ずつ上下"),
     ("ドラッグ&ドロップ", "ファイル / フォルダを開く・プレイリストに追加"),
 ]
 
 HELP_NOTES = [
     "フォルダをドロップすると、中の動画を名前順にまとめてプレイリストへ追加します (500件まで)。",
     "全画面では操作系が自動で隠れます。マウスを動かすと再表示されます (Esc で解除)。",
+    "映像の上でマウスホイールを回すと音量を 5 ずつ調整できます。",
     "字幕の文字コードは自動判定します (「字幕」→「文字コード」で手動指定も可能)。",
     "「字幕」メニューからサイズ・位置・縁取り・文字色・フォントを変更できます。",
     "「字幕」メニューの「背景帯」で字幕の後ろの黒帯を消せます (既定は表示)。",
@@ -1378,6 +1382,17 @@ class PlayerWindow(QMainWindow):
             self.mute_btn.setChecked(False)
             self.audio.setMuted(False)
 
+    def nudge_volume(self, delta: int) -> bool:
+        """音量を delta だけ変える (範囲外は clamp)。変化があれば True。"""
+        if not delta:
+            return False
+        before = self.vol.value()
+        new = max(self.vol.minimum(), min(self.vol.maximum(), before + delta))
+        if new == before:
+            return False
+        self.vol.setValue(new)  # change_volume 経由で audio にも反映・ミュート解除
+        return True
+
     @Slot()
     def toggle_mute(self) -> None:
         muted = self.mute_btn.isChecked()
@@ -1438,6 +1453,14 @@ class PlayerWindow(QMainWindow):
         # 子ウィジェット (映像領域など) 上のマウス移動も活動として扱う。
         if event.type() == QEvent.Type.MouseMove and self._is_fullscreen:
             self.note_activity()
+        # 映像上のホイールで音量を上下する (スライダー上は既定動作に任せる)。
+        elif event.type() == QEvent.Type.Wheel and obj is self.video:
+            dy = event.angleDelta().y()
+            if dy:
+                self.nudge_volume(VOLUME_STEP if dy > 0 else -VOLUME_STEP)
+                self.note_activity()
+                event.accept()
+                return True
         return super().eventFilter(obj, event)
 
     @Slot()
