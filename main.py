@@ -35,6 +35,7 @@ from PySide6.QtGui import (
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QDockWidget,
     QDialog,
@@ -98,7 +99,7 @@ def collect_video_files(path: str, recursive: bool = True,
     return out
 
 APP_NAME = "シンプル動画プレイヤー"
-__version__ = "1.11.0"
+__version__ = "1.12.0"
 
 
 def _resource_path(rel: str) -> str:
@@ -359,6 +360,7 @@ HELP_NOTES = [
     "全画面では操作系が自動で隠れます。マウスを動かすと再表示されます (Esc で解除)。",
     "字幕の文字コードは自動判定します (「字幕」→「文字コード」で手動指定も可能)。",
     "「字幕」メニューからサイズ・位置・縁取り・文字色・フォントを変更できます。",
+    "プレイリストはドラッグ、または「上へ」「下へ」で並べ替えできます (順序は保存されます)。",
     "終了時に音量・速度・プレイリスト・字幕設定を保存し、次回起動時に復元します。",
     "動画と同じフォルダに同名の .srt があれば、自動で読み込みます。",
 ]
@@ -563,6 +565,14 @@ class PlayerWindow(QMainWindow):
         self.playlist = QListWidget()
         self.playlist.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.playlist.itemDoubleClicked.connect(self._on_playlist_activated)
+        # 並べ替え: 内部ドラッグ移動のみ許可 (ファイルのドロップは親ウィンドウが処理)。
+        self.playlist.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
+        self.playlist.setDefaultDropAction(Qt.DropAction.MoveAction)
+        self.playlist.setDragEnabled(True)
+        self.playlist.setAcceptDrops(True)
+        self.playlist.setDropIndicatorShown(True)
+        self.playlist.setSelectionMode(
+            QAbstractItemView.SelectionMode.SingleSelection)
 
         self.pl_dock = QDockWidget("プレイリスト", self)
         self.pl_dock.setObjectName("playlist_dock")
@@ -580,7 +590,9 @@ class PlayerWindow(QMainWindow):
         pl_bot = QHBoxLayout()
         self.prev_btn = QPushButton("前へ")
         self.next_btn = QPushButton("次へ")
-        for b in (self.prev_btn, self.next_btn):
+        self.pl_up_btn = QPushButton("上へ")
+        self.pl_down_btn = QPushButton("下へ")
+        for b in (self.prev_btn, self.next_btn, self.pl_up_btn, self.pl_down_btn):
             b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             pl_bot.addWidget(b)
         self.pl_add_btn.clicked.connect(self.add_files_dialog)
@@ -588,6 +600,8 @@ class PlayerWindow(QMainWindow):
         self.pl_clear_btn.clicked.connect(self.clear_playlist)
         self.prev_btn.clicked.connect(self.play_prev)
         self.next_btn.clicked.connect(self.play_next)
+        self.pl_up_btn.clicked.connect(lambda: self.move_selected(-1))
+        self.pl_down_btn.clicked.connect(lambda: self.move_selected(+1))
         pl_lay.addLayout(pl_top)
         pl_lay.addWidget(self.playlist, 1)
         pl_lay.addLayout(pl_bot)
@@ -892,8 +906,7 @@ class PlayerWindow(QMainWindow):
             "subtitle_encoding": self._sub_encoding,
             "subtitle_color": list(self._sub_color),
             "subtitle_font": self._sub_font,
-            "playlist": [self.playlist.item(i).data(Qt.ItemDataRole.UserRole)
-                         for i in range(self.playlist.count())],
+            "playlist": self.playlist_paths(),
         }
         try:
             with open(SESSION_FILE, "w", encoding="utf-8") as f:
@@ -1150,6 +1163,29 @@ class PlayerWindow(QMainWindow):
     def remove_selected(self) -> None:
         for it in self.playlist.selectedItems():
             self.playlist.takeItem(self.playlist.row(it))
+
+    def playlist_paths(self) -> list[str]:
+        """プレイリストのパスを表示順で返す。"""
+        return [self.playlist.item(i).data(Qt.ItemDataRole.UserRole)
+                for i in range(self.playlist.count())]
+
+    def move_selected(self, delta: int) -> bool:
+        """選択項目を上下へ1つ動かす (ドラッグ以外の並べ替え手段)。"""
+        if delta == 0:
+            return False
+        row = self.playlist.currentRow()
+        if row < 0:
+            items = self.playlist.selectedItems()
+            row = self.playlist.row(items[0]) if items else -1
+        if row < 0:
+            return False
+        dst = row + (1 if delta > 0 else -1)
+        if not 0 <= dst < self.playlist.count():
+            return False
+        item = self.playlist.takeItem(row)
+        self.playlist.insertItem(dst, item)
+        self.playlist.setCurrentRow(dst)
+        return True
 
     def clear_playlist(self) -> None:
         self.playlist.clear()

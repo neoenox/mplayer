@@ -3,6 +3,7 @@ __pycache__/
 *.py[cod]
 test_logs/
 tmp_p4/
+tmp_p23/
 resume.json
 session.json
 build/
