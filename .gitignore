@@ -2,7 +2,7 @@
 __pycache__/
 *.py[cod]
 test_logs/
-tmp_p*/
+tmp_*/
 resume.json
 session.json
 build/

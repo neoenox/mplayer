@@ -55,6 +55,7 @@ STAGES = [
     ("p29_screenshot", "tests/test_p29_screenshot.py", 150),
     ("p30_frame_step", "tests/test_p30_frame_step.py", 150),
     ("p32_subtitle_delay", "tests/test_p32_subtitle_delay.py", 150),
+    ("p33_resume_window", "tests/test_p33_resume_window.py", 150),
 ]
 
 
