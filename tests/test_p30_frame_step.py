@@ -24,7 +24,7 @@ if os.path.isfile(RESUME):
     os.remove(RESUME)
 
 from helpers import (check, dialog_calls, finish, make_app,  # noqa: E402
-                     patch_message_boxes, silence, wait_until)
+                     patch_message_boxes, silence, wait_for_frame, wait_until)
 
 from PySide6.QtCore import QEventLoop, Qt, QTimer  # noqa: E402
 from PySide6.QtMultimedia import QMediaMetaData, QMediaPlayer  # noqa: E402
@@ -113,7 +113,7 @@ def main():
           str(w.player.duration()))
     check("fps を取得できる (30fps -> 33ms)", w.frame_step_ms() == 33,
           str(w.frame_step_ms()))
-    check("映像が出る", wait_until(lambda: w.screenshot_image() is not None, 15000))
+    check("映像が出る", wait_for_frame(w))
     w.player.pause()
     check("一時停止する", wait_until(
         lambda: w.player.playbackState() != QMediaPlayer.PlaybackState.PlayingState, 3000))
