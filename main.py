@@ -105,7 +105,7 @@ def collect_video_files(path: str, recursive: bool = True,
     return out
 
 APP_NAME = "シンプル動画プレイヤー"
-__version__ = "1.18.0"
+__version__ = "1.18.1"
 
 
 def _resource_path(rel: str) -> str:
@@ -676,8 +676,11 @@ class PlayerWindow(QMainWindow):
         pl_add_act = QAction("プレイリストに追加...", self)
         pl_add_act.triggered.connect(self.add_files_dialog)
         file_menu.addAction(pl_add_act)
+        file_menu.addSeparator()
 
         # スクリーンショット: Ctrl+S で即保存 (既定の保存先) と、名前を付けて保存。
+        # メニューとウィンドウ全体の両方に登録し、全画面 (メニューバー非表示) でも
+        # Ctrl+S が効くようにする (A-B リピートと同じ作法)。
         self.shot_act = QAction("スクリーンショットを保存", self)
         self.shot_act.setShortcut(QKeySequence("Ctrl+S"))
         self.shot_act.triggered.connect(lambda: self.screenshot())
@@ -889,8 +892,10 @@ class PlayerWindow(QMainWindow):
         # 別の動画を開くと解除される (セッションには保存しない)。
         self._ab_a: int | None = None
         self._ab_b: int | None = None
-        # スクリーンショット: 直近のフレームと、メッセージを表示する時間 (ms)。
+        # スクリーンショット: 直近のフレーム (と、一時停止時に複製した画像) と、
+        # メッセージを表示する時間 (ms)。
         self._last_frame = None
+        self._last_image = None
         self._shot_hide_ms = 3000
         self._shot_timer = QTimer(self)
         self._shot_timer.setSingleShot(True)
@@ -921,6 +926,7 @@ class PlayerWindow(QMainWindow):
         # スクリーンショット用に保持したフレームも破棄する (前の動画の映像を
         # 保存してしまわないように)。
         self._last_frame = None
+        self._last_image = None
         self.player.setSource(QUrl.fromLocalFile(path))
         self.play_btn.setEnabled(True)
         self.stop_btn.setEnabled(True)
@@ -1520,25 +1526,49 @@ class PlayerWindow(QMainWindow):
 
     # ---------- スクリーンショット ----------
     def _on_video_frame(self, frame) -> None:
-        """表示中のフレームを保持する (スクリーンショット用)。"""
+        """表示中のフレームを保持する (スクリーンショット用)。
+
+        再生中はフレームを参照するだけ (コピーしない)。一時停止中は後から
+        変換できなくなる場合に備えて、その場で画像に複製しておく。
+        静止中は届く頻度が低いので、複製の負荷は無視できる。
+        """
         try:
-            if frame is not None and frame.isValid():
-                self._last_frame = frame
+            if frame is None or not frame.isValid():
+                return
+            self._last_frame = frame
+            if self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
+                self._last_image = None
+            else:
+                self._last_image = self._frame_to_image(frame)
         except Exception:
             pass
 
-    def screenshot_image(self):
-        """現在のフレームを QImage で返す (取得できないときは None)。"""
-        frame = self._last_frame
-        if frame is None:
-            return None
+    @staticmethod
+    def _frame_to_image(frame):
+        """QVideoFrame を QImage に変換する (できないときは None)。"""
         try:
-            if not frame.isValid():
+            if frame is None or not frame.isValid():
                 return None
             image = frame.toImage()
         except Exception:
             return None
         return None if image.isNull() else image
+
+    def _cache_still_image(self) -> None:
+        """一時停止/停止した時点のフレームを画像として固定する (1 度だけ)。"""
+        if self._last_image is not None or self._last_frame is None:
+            return
+        self._last_image = self._frame_to_image(self._last_frame)
+
+    def screenshot_image(self):
+        """現在のフレームを QImage で返す (取得できないときは None)。"""
+        if self._last_image is not None and not self._last_image.isNull():
+            return self._last_image
+        return self._frame_to_image(self._last_frame)
+
+    def has_frame(self) -> bool:
+        """スクリーンショットに使える映像を保持しているか。"""
+        return self._last_image is not None or self._last_frame is not None
 
     def default_screenshot_path(self) -> str | None:
         """既定の保存先を返す。動画と同じフォルダに「動画名_日時.png」。
@@ -1600,9 +1630,10 @@ class PlayerWindow(QMainWindow):
         self.shot_label.setText(text)
         self.shot_label.setVisible(True)
         # 全画面で操作系が隠れているときは、メッセージが見えるように出す。
+        # 操作系を隠すタイマーが先に切れないよう、長い方に合わせる。
         if self._is_fullscreen and not self.controls.isVisible():
             self._show_fs_controls()
-            self._fs_timer.start(self._fs_hide_ms)
+            self._fs_timer.start(max(self._fs_hide_ms, self._shot_hide_ms))
         self._shot_timer.start(self._shot_hide_ms)
 
     def _clear_shot_message(self) -> None:
@@ -1852,10 +1883,17 @@ class PlayerWindow(QMainWindow):
         else:
             self.play_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay))
             self.play_btn.setText("再生")
+            # 静止した時点のフレームを画像として固定する (スクリーンショット用)。
+            self._cache_still_image()
 
     @Slot(QMediaPlayer.MediaStatus)
     def on_media_status(self, status: QMediaPlayer.MediaStatus) -> None:
-        if status == QMediaPlayer.MediaStatus.EndOfMedia:
+        if status == QMediaPlayer.MediaStatus.LoadedMedia:
+            # 新しいソースが読み込めた時点で保持フレームを捨てる。直前に
+            # 開いていた動画のフレームが遅れて届いても、前の映像を保存しない。
+            self._last_frame = None
+            self._last_image = None
+        elif status == QMediaPlayer.MediaStatus.EndOfMedia:
             # 終了時は先頭に戻して停止表示にする (自動リピートはしない)。
             # player.stop() は使わない (_do_stop と同じ理由)。
             # 世代付き遅延で処理し、直後に別ファイルへ切り替わっていたら破棄する。
