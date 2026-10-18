@@ -56,6 +56,7 @@ STAGES = [
     ("p30_frame_step", "tests/test_p30_frame_step.py", 150),
     ("p32_subtitle_delay", "tests/test_p32_subtitle_delay.py", 150),
     ("p33_resume_window", "tests/test_p33_resume_window.py", 150),
+    ("p34_shuffle_repeat", "tests/test_p34_shuffle_repeat.py", 180),
 ]
 
 
