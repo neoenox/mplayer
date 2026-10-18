@@ -53,6 +53,7 @@ STAGES = [
     ("p27_subtitle_pref", "tests/test_p27_subtitle_pref.py", 120),
     ("p28_ab_repeat", "tests/test_p28_ab_repeat.py", 150),
     ("p29_screenshot", "tests/test_p29_screenshot.py", 150),
+    ("p30_frame_step", "tests/test_p30_frame_step.py", 150),
 ]
 
 
