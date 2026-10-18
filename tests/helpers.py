@@ -3,6 +3,7 @@ import os
 import sys
 
 from PySide6.QtCore import QEventLoop, QTimer
+from PySide6.QtMultimedia import QMediaPlayer
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 # モーダルダイアログの記録 (パッチ適用後に格納)
@@ -62,6 +63,39 @@ def wait_until(pred, timeout_ms=10000, poll_ms=100):
     loop.exec()
     timer.stop()
     return state["done"]
+
+
+def first_bytes(path, n=8):
+    """ファイルの先頭 n バイト (開けない/存在しないときは None)。
+
+    保存に失敗した場合でもテストがクラッシュせず FAIL として集計できるようにする。
+    """
+    if not path or not os.path.isfile(path):
+        return None
+    try:
+        with open(path, "rb") as f:
+            return f.read(n)
+    except OSError:
+        return None
+
+
+def wait_for_frame(w, timeout_ms=7000, attempts=3, nudge_ms=200):
+    """最初のフレームが届くまで待つ。届かないときは促して再試行する。
+
+    デコーダの初期化タイミングにより、再生中でも最初のフレームが届かず
+    タイムアウトすることがある (環境依存)。再生状態と位置を動かすと
+    デコードが促されるため、数回試してから諦める。
+    """
+    for i in range(max(1, attempts)):
+        if wait_until(lambda: w.screenshot_image() is not None, timeout_ms):
+            return True
+        try:
+            if w.player.playbackState() != QMediaPlayer.PlaybackState.PlayingState:
+                w.player.play()
+            w.player.setPosition(w.player.position() + nudge_ms * (i + 1))
+        except Exception:
+            pass
+    return False
 
 
 def make_app():

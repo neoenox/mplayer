@@ -26,7 +26,8 @@ os.environ["MPLAYER_SESSION_FILE"] = SESSION
 if os.path.isfile(RESUME):
     os.remove(RESUME)
 
-from helpers import check, finish, make_app, patch_message_boxes, silence, wait_until
+from helpers import (check, finish, first_bytes, make_app,  # noqa: E402
+                     patch_message_boxes, silence, wait_for_frame, wait_until)
 
 from PySide6.QtCore import QEventLoop, Qt, QTimer
 from PySide6.QtGui import QImage
@@ -93,8 +94,7 @@ def main():
     check("長さを取得", wait_until(lambda: w.player.duration() > 0, 5000),
           str(w.player.duration()))
     # 再生中に最初のフレームが届く (一時停止したままだと届かないことがある)。
-    check("フレームを取得できる",
-          wait_until(lambda: w.screenshot_image() is not None, 15000))
+    check("フレームを取得できる", wait_for_frame(w))
     img = w.screenshot_image()
     check("QImage が返る", isinstance(img, QImage), str(type(img)))
     check("画像は空でない", img is not None and not img.isNull())
@@ -121,15 +121,16 @@ def main():
     check("保存されたファイルは 1KB 以上",
           bool(saved) and os.path.getsize(saved) > 1024,
           str(os.path.getsize(saved) if saved else 0))
-    with open(saved, "rb") as f:
-        check("PNG 署名で始まる", f.read(8) == PNG_MAGIC)
-    reopened = QImage(saved)
+    # 保存に失敗しても (フレーム未取得など) クラッシュさせず FAIL として集計する。
+    check("PNG 署名で始まる", first_bytes(saved) == PNG_MAGIC, str(saved))
+    reopened = QImage(saved) if saved else QImage()
     check("保存した PNG を開ける", not reopened.isNull())
     check("保存した PNG の寸法が一致",
           (reopened.width(), reopened.height()) == (640, 360),
           f"{reopened.width()}x{reopened.height()}")
     check("メッセージにファイル名が出る",
-          os.path.basename(saved) in w.shot_label.text(), w.shot_label.text())
+          bool(saved) and os.path.basename(saved) in w.shot_label.text(),
+          w.shot_label.text())
     check("保存メッセージが表示される", w.shot_label.isVisible())
 
     # --- 同一秒に続けて保存しても上書きしない (連番) ---
@@ -167,7 +168,7 @@ def main():
         check("ダイアログ経由で保存できる (拡張子を補完)",
               os.path.isfile(os.path.join(TMP, "via_dialog.png")))
         check("ダイアログ保存も PNG",
-              open(os.path.join(TMP, "via_dialog.png"), "rb").read(8) == PNG_MAGIC)
+              first_bytes(os.path.join(TMP, "via_dialog.png")) == PNG_MAGIC)
 
         # .png 以外を入力したときは .png を足す (foo.jpg -> foo.jpg.png)
         QFileDialog.getSaveFileName = staticmethod(
@@ -187,13 +188,39 @@ def main():
     explicit = os.path.join(TMP, "explicit")
     check("明示パスへ保存できる", w.screenshot(explicit + ".png") == explicit + ".png"
           and os.path.isfile(explicit + ".png"))
-    check("明示保存も PNG", open(explicit + ".png", "rb").read(8) == PNG_MAGIC)
+    check("明示保存も PNG", first_bytes(explicit + ".png") == PNG_MAGIC)
 
     # --- 失敗しても落ちない ---
     bad = os.path.join(TMP, "no_such_dir", "x.png")
     check("保存できない場所では None", w.screenshot(bad) is None)
     check("失敗メッセージが出る", "失敗" in w.shot_label.text(), w.shot_label.text())
     check("失敗時はファイルが作られない", not os.path.exists(bad))
+
+    # --- 映像が出ていないときの保存 ---
+    # 環境により最初のフレームが届かないことがあるため、その経路を強制的に
+    # 作って「保存せずメッセージを出すだけ」で落ちないことを確かめる。
+    before_no_frame = len(png_files())
+    w.screenshot_image = lambda: None
+    try:
+        check("映像なしの保存は None", w.screenshot() is None)
+        check("映像なしのメッセージ", "映像" in w.shot_label.text(),
+              w.shot_label.text())
+        check("映像なしではファイルを作らない",
+              len(png_files()) == before_no_frame,
+              f"{before_no_frame} -> {len(png_files())}")
+        check("映像なしの明示保存も None",
+              w.screenshot(os.path.join(TMP, "no_frame.png")) is None)
+        check("映像なしでは明示先も作られない",
+              not os.path.exists(os.path.join(TMP, "no_frame.png")))
+    finally:
+        try:
+            del w.screenshot_image
+        except AttributeError:
+            pass
+    # テスト側のヘルパーも None / 不在パスで落ちないこと
+    check("先頭バイト取得 (パスなし) は None", first_bytes(None) is None)
+    check("先頭バイト取得 (存在しないパス) は None",
+          first_bytes(os.path.join(TMP, "no_such.png")) is None)
 
     # --- メッセージは数秒で消える ---
     w._shot_hide_ms = 300
@@ -265,8 +292,7 @@ def main():
     # --- 別の動画を開くとフレームを破棄する ---
     check("別の動画を開く", w.load(CLIP2))
     check("開いた直後はフレームを保持しない", not w.has_frame())
-    check("新しい動画でもフレームを取得できる",
-          wait_until(lambda: w.screenshot_image() is not None, 10000))
+    check("新しい動画でもフレームを取得できる", wait_for_frame(w))
 
     # --- ドキュメント / ヘルプ ---
     keys = [k for k, _ in SHORTCUTS]
