@@ -9,6 +9,7 @@ import glob
 import os
 import shutil
 import sys
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -29,14 +30,15 @@ from helpers import check, finish, make_app, patch_message_boxes, silence, wait_
 
 from PySide6.QtCore import QEventLoop, Qt, QTimer
 from PySide6.QtGui import QImage
+from PySide6.QtMultimedia import QMediaPlayer
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QFileDialog, QMenu
 
+import main as player_main
 from main import HELP_NOTES, SHORTCUTS, PlayerWindow
 
 SRC = os.path.join(BASE, "test_640x360.mp4")
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
-saved_get_save = QFileDialog.getSaveFileName
 
 
 def pump(ms=0):
@@ -73,7 +75,7 @@ def main():
     check("ファイルメニューに名前を付けて保存がある",
           any("名前を付けて保存" in x for x in labels), str(labels))
     check("初期状態はメッセージ非表示", not w.shot_label.isVisible())
-    check("初期状態はフレーム未保持", w._last_frame is None)
+    check("初期状態はフレーム未保持", not w.has_frame())
 
     # --- 動画なし ---
     check("未ロードの既定保存先は無し", w.default_screenshot_path() is None)
@@ -115,8 +117,7 @@ def main():
     saved = w.screenshot()
     check("既定の保存先へ保存できる", bool(saved) and os.path.isfile(saved),
           str(saved))
-    check("保存先は既定と一致", saved == default or
-          (saved is not None and os.path.isfile(saved)), str(saved))
+    check("保存先は既定と一致", saved == default, f"{saved} / {default}")
     check("保存されたファイルは 1KB 以上",
           bool(saved) and os.path.getsize(saved) > 1024,
           str(os.path.getsize(saved) if saved else 0))
@@ -131,6 +132,23 @@ def main():
           os.path.basename(saved) in w.shot_label.text(), w.shot_label.text())
     check("保存メッセージが表示される", w.shot_label.isVisible())
 
+    # --- 同一秒に続けて保存しても上書きしない (連番) ---
+    # 時刻に依存するため、strftime を固定して検証する。
+    fixed = "20260101-000000"
+    base = os.path.join(TMP, f"clip_{fixed}")
+    with mock.patch.object(player_main.time, "strftime", lambda fmt: fixed):
+        first = w.default_screenshot_path()
+        check("既存が無ければ連番なし", first == base + ".png", str(first))
+        open(base + ".png", "wb").write(b"dummy")
+        second = w.default_screenshot_path()
+        check("既存があれば _2 を返す", second == base + "_2.png", str(second))
+        open(base + "_2.png", "wb").write(b"dummy")
+        third = w.default_screenshot_path()
+        check("さらに既存があれば _3 を返す", third == base + "_3.png", str(third))
+        check("連番の候補は実在しない", third is not None and not os.path.exists(third))
+    for dummy in (base + ".png", base + "_2.png"):
+        os.remove(dummy)
+
     # --- 名前を付けて保存 (拡張子の補完・キャンセル) ---
     dialog_args = {}
 
@@ -138,26 +156,33 @@ def main():
         dialog_args["args"] = args
         return os.path.join(TMP, "via_dialog"), "PNG 画像 (*.png)"
 
-    QFileDialog.getSaveFileName = staticmethod(fake_get_save)
-    w.screenshot_dialog()
-    check("ダイアログの既定保存先が動画フォルダ",
-          len(dialog_args.get("args", ())) >= 3 and
-          os.path.dirname(dialog_args["args"][2]) == TMP,
-          str(dialog_args.get("args")))
-    check("ダイアログ経由で保存できる (拡張子を補完)",
-          os.path.isfile(os.path.join(TMP, "via_dialog.png")))
-    check("ダイアログ保存も PNG",
-          open(os.path.join(TMP, "via_dialog.png"), "rb").read(8) == PNG_MAGIC)
+    saved_get_save = QFileDialog.getSaveFileName
+    try:
+        QFileDialog.getSaveFileName = fake_get_save
+        w.screenshot_dialog()
+        check("ダイアログの既定保存先が動画フォルダ",
+              len(dialog_args.get("args", ())) >= 3 and
+              os.path.dirname(dialog_args["args"][2]) == TMP,
+              str(dialog_args.get("args")))
+        check("ダイアログ経由で保存できる (拡張子を補完)",
+              os.path.isfile(os.path.join(TMP, "via_dialog.png")))
+        check("ダイアログ保存も PNG",
+              open(os.path.join(TMP, "via_dialog.png"), "rb").read(8) == PNG_MAGIC)
 
-    def cancel_save(*args, **kwargs):
-        return "", ""
+        # .png 以外を入力したときは .png を足す (foo.jpg -> foo.jpg.png)
+        QFileDialog.getSaveFileName = staticmethod(
+            lambda *a, **k: (os.path.join(TMP, "typed.jpg"), ""))
+        w.screenshot_dialog()
+        check("拡張子が .png 以外でも .png を付ける",
+              os.path.isfile(os.path.join(TMP, "typed.jpg.png")))
 
-    QFileDialog.getSaveFileName = staticmethod(cancel_save)
-    before_cancel = len(png_files())
-    w.screenshot_dialog()
-    check("キャンセルでは保存されない", len(png_files()) == before_cancel,
-          f"{before_cancel} -> {len(png_files())}")
-    QFileDialog.getSaveFileName = saved_get_save
+        QFileDialog.getSaveFileName = staticmethod(lambda *a, **k: ("", ""))
+        before_cancel = len(png_files())
+        w.screenshot_dialog()
+        check("キャンセルでは保存されない", len(png_files()) == before_cancel,
+              f"{before_cancel} -> {len(png_files())}")
+    finally:
+        QFileDialog.getSaveFileName = saved_get_save
 
     explicit = os.path.join(TMP, "explicit")
     check("明示パスへ保存できる", w.screenshot(explicit + ".png") == explicit + ".png"
@@ -189,6 +214,19 @@ def main():
           wait_until(lambda: len(png_files()) >= before + 1, 3000),
           f"{before} -> {len(png_files())}")
 
+    # --- 一時停止中にシークしたら、その位置の絵に更新される ---
+    check("一時停止する", wait_until(
+        lambda: w.player.playbackState() != QMediaPlayer.PlaybackState.PlayingState,
+        3000))
+    before_img = w.screenshot_image()
+    check("一時停止中も画像を保持している", before_img is not None)
+    w.player.setPosition(max(1000, w.player.duration() - 300))
+    check("一時停止中のシークで絵が更新される",
+          wait_until(lambda: w.screenshot_image() is not before_img, 5000))
+    after_img = w.screenshot_image()
+    check("更新後の画像も空でない", after_img is not None and not after_img.isNull())
+    check("シーク前とは別の絵になっている", after_img != before_img)
+
     # --- 全画面でも保存できる ---
     w.toggle_fullscreen()
     pump(60)
@@ -205,13 +243,28 @@ def main():
     check("保存時に操作系が表示される", w.controls.isVisible())
     check("保存メッセージが見える", w.shot_label.isVisible())
 
+    # 操作系を隠すタイマー (既定 2.5 秒) が先に切れても、メッセージの表示時間
+    # (既定 3 秒) までは操作系ごと消えないこと。
+    w._fs_hide_ms = 200
+    w._shot_hide_ms = 1200
+    w._hide_fs_controls()
+    w.screenshot()
+    pump(600)
+    check("操作系を隠すタイマーより後に消える",
+          w.shot_label.isVisible() and w.controls.isVisible(),
+          f"label={w.shot_label.isVisible()} controls={w.controls.isVisible()}")
+    check("メッセージは時間が来れば消える",
+          wait_until(lambda: not w.shot_label.isVisible(), 3000))
+    w._fs_hide_ms = 2500
+    w._shot_hide_ms = 3000
+
     w.exit_fullscreen()
     pump(60)
     check("全画面を解除", w._is_fullscreen is False)
 
     # --- 別の動画を開くとフレームを破棄する ---
     check("別の動画を開く", w.load(CLIP2))
-    check("開いた直後はフレームを保持しない", w._last_frame is None)
+    check("開いた直後はフレームを保持しない", not w.has_frame())
     check("新しい動画でもフレームを取得できる",
           wait_until(lambda: w.screenshot_image() is not None, 10000))
 
