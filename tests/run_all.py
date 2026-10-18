@@ -51,6 +51,7 @@ STAGES = [
     ("p25_wheel_volume", "tests/test_p25_wheel_volume.py", 90),
     ("p26_seek_keys", "tests/test_p26_seek_keys.py", 120),
     ("p27_subtitle_pref", "tests/test_p27_subtitle_pref.py", 120),
+    ("p28_ab_repeat", "tests/test_p28_ab_repeat.py", 150),
 ]
 
 

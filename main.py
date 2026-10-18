@@ -65,6 +65,9 @@ SUBTITLE_EXTS = {".srt"}
 DROP_MAX_FILES = 500
 # 映像上のマウスホイール1回で変える音量 (0-100)。
 VOLUME_STEP = 5
+# A-B リピートの最短区間 (ms)。これ未満しか離れていない B 点は受け付けない
+# (位置更新の粒度で A と B が同一点になり、無限ループになるのを防ぐ)。
+AB_MIN_GAP_MS = 500
 
 
 def is_video_file(path: str) -> bool:
@@ -101,7 +104,7 @@ def collect_video_files(path: str, recursive: bool = True,
     return out
 
 APP_NAME = "シンプル動画プレイヤー"
-__version__ = "1.16.0"
+__version__ = "1.17.0"
 
 
 def _resource_path(rel: str) -> str:
@@ -356,6 +359,8 @@ SHORTCUTS = [
     ("↑ / ↓", "音量 +10 / -10"),
     ("M", "ミュート切替"),
     ("S", "字幕 ON / OFF"),
+    ("A / B", "A-B リピートの A 点 / B 点を設定"),
+    ("C", "A-B リピートを解除"),
     ("] / [", "再生速度 上げる / 下げる"),
     ("F / F11", "全画面切替"),
     ("Esc", "全画面を解除"),
@@ -376,6 +381,7 @@ HELP_NOTES = [
     "「字幕」メニューからサイズ・位置・縁取り・文字色・フォントを変更できます。",
     "「字幕」メニューの「背景帯」で字幕の後ろの黒帯を消せます (既定は表示)。",
     "プレイリストはドラッグ、または「上へ」「下へ」で並べ替えできます (順序は保存されます)。",
+    "A-B リピート: 再生中に A で開始点、B で終了点を決めると、その区間だけを繰り返します (C で解除)。",
     "終了時に音量・速度・プレイリスト・字幕設定 (表示 ON/OFF 含む) を保存し、次回起動時に復元します。",
     "動画と同じフォルダに同名の .srt があれば、自動で読み込みます。",
 ]
@@ -534,6 +540,12 @@ class PlayerWindow(QMainWindow):
         self.pl_btn.setCheckable(True)
         self.pl_btn.toggled.connect(self._toggle_playlist_dock)
 
+        # A-B リピートの状態表示 (A 点未設定のときは隠す)。
+        self.ab_label = QLabel("")
+        self.ab_label.setObjectName("ab_label")
+        self.ab_label.setToolTip("A-B リピート: A で開始点、B で終了点、C で解除")
+        self.ab_label.hide()
+
         self.fs_btn = QPushButton("全画面")
         self.fs_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.fs_btn.clicked.connect(self.toggle_fullscreen)
@@ -552,6 +564,7 @@ class PlayerWindow(QMainWindow):
         bottom_row.addWidget(self.speed_btn)
         bottom_row.addWidget(self.subs_btn)
         bottom_row.addWidget(self.pl_btn)
+        bottom_row.addWidget(self.ab_label)
         bottom_row.addStretch(1)
         bottom_row.addWidget(self.fs_btn)
 
@@ -721,6 +734,27 @@ class PlayerWindow(QMainWindow):
         self.speed_down_act.triggered.connect(self.speed_down)
         self.addAction(self.speed_down_act)
 
+        # A-B リピート (区間リピート)。メニューに載せつつ、全画面でも効くよう
+        # ウィンドウ全体のショートカットとしても登録する。
+        play_menu = self.menuBar().addMenu("再生")
+        self.ab_a_act = QAction("A-B: A 点を設定", self)
+        self.ab_a_act.setShortcut(Qt.Key.Key_A)
+        self.ab_a_act.triggered.connect(self.set_ab_a)
+        play_menu.addAction(self.ab_a_act)
+        self.addAction(self.ab_a_act)
+
+        self.ab_b_act = QAction("A-B: B 点を設定してループ", self)
+        self.ab_b_act.setShortcut(Qt.Key.Key_B)
+        self.ab_b_act.triggered.connect(self.set_ab_b)
+        play_menu.addAction(self.ab_b_act)
+        self.addAction(self.ab_b_act)
+
+        self.ab_clear_act = QAction("A-B リピートを解除", self)
+        self.ab_clear_act.setShortcut(Qt.Key.Key_C)
+        self.ab_clear_act.triggered.connect(self.clear_ab)
+        play_menu.addAction(self.ab_clear_act)
+        self.addAction(self.ab_clear_act)
+
         sub_menu = self.menuBar().addMenu("字幕")
         size_menu = sub_menu.addMenu("サイズ")
         self._sub_size_group = QActionGroup(self)
@@ -825,6 +859,10 @@ class PlayerWindow(QMainWindow):
         self._sub_used_encoding = ""
         # 全画面時にプレイリストの表示状態を退避
         self._dock_visible_before_fs = False
+        # A-B リピート (区間リピート)。None は未設定。ファイル単位の設定で、
+        # 別の動画を開くと解除される (セッションには保存しない)。
+        self._ab_a: int | None = None
+        self._ab_b: int | None = None
 
     # ---------- ファイル ----------
     @Slot()
@@ -846,6 +884,8 @@ class PlayerWindow(QMainWindow):
         self._restore_pos = self._resume_pos_for(self._current_path)
         # 字幕をリセットし、同名 .srt があれば自動で読み込む
         self.clear_subtitles()
+        # A-B リピートはファイル単位の設定。別の動画を開いたら解除する。
+        self.clear_ab()
         self.player.setSource(QUrl.fromLocalFile(path))
         self.play_btn.setEnabled(True)
         self.stop_btn.setEnabled(True)
@@ -1367,6 +1407,82 @@ class PlayerWindow(QMainWindow):
         self.seek.setValue(target)
         self._post_seek(target)
 
+    # ---------- A-B リピート (区間リピート) ----------
+    def ab_state(self) -> tuple[int | None, int | None]:
+        """(A 点, B 点)。未設定は None。"""
+        return self._ab_a, self._ab_b
+
+    def ab_active(self) -> bool:
+        """A 点・B 点が有効な区間 (AB_MIN_GAP_MS 以上) として設定されているか。"""
+        a, b = self._ab_a, self._ab_b
+        return a is not None and b is not None and b - a >= AB_MIN_GAP_MS
+
+    def set_ab_a(self) -> bool:
+        """現在位置を A 点に設定する。既存の B 点は解除する (ループ停止)。
+
+        未ロード時 (長さ不明) は何もしない。
+        """
+        dur = self.player.duration()
+        if dur <= 0:
+            return False
+        self._ab_a = min(max(self.player.position(), 0), dur)
+        self._ab_b = None
+        self._update_ab_label()
+        return True
+
+    def set_ab_b(self) -> bool:
+        """現在位置を B 点に設定し、A-B ループを開始する。
+
+        A 点が未設定、または現在位置が A 点の直後 (AB_MIN_GAP_MS 未満) の
+        場合は受け付けない (区間が潰れて無限ループになるのを防ぐ)。
+        """
+        dur = self.player.duration()
+        if dur <= 0 or self._ab_a is None:
+            return False
+        b = min(max(self.player.position(), 0), dur)
+        if b - self._ab_a < AB_MIN_GAP_MS:
+            return False
+        self._ab_b = b
+        self._update_ab_label()
+        return True
+
+    def clear_ab(self) -> None:
+        """A-B リピートを解除する (未設定なら何もしない)。"""
+        if self._ab_a is None and self._ab_b is None:
+            return
+        self._ab_a = None
+        self._ab_b = None
+        self._update_ab_label()
+
+    def ab_label_text(self) -> str:
+        """状態表示の文言 (テスト・デバッグ用)。"""
+        if self._ab_a is None:
+            return ""
+        if self._ab_b is None:
+            return f"A-B: A {format_ms(self._ab_a)} (B 未設定)"
+        return f"A-B ループ {format_ms(self._ab_a)} → {format_ms(self._ab_b)}"
+
+    def _update_ab_label(self) -> None:
+        text = self.ab_label_text()
+        self.ab_label.setText(text)
+        self.ab_label.setVisible(bool(text))
+
+    def _maybe_ab_loop(self, pos: int) -> None:
+        """B 点に達したら A 点へ戻す。
+
+        再生中のみ働く (シーク操作や一時停止中の位置を勝手に戻さない)。
+        バックエンドへの再入を避けるため、既存の遅延シーク経路を使う。
+        """
+        if not self.ab_active():
+            return
+        if self.player.playbackState() != QMediaPlayer.PlaybackState.PlayingState:
+            return
+        a, b = self._ab_a, self._ab_b
+        if pos < b or self._pending_seek == a:
+            return
+        self.seek.setValue(a)
+        self._post_seek(a)
+
     @Slot()
     def cycle_speed(self) -> None:
         self._rate_idx = (self._rate_idx + 1) % len(self._rates)
@@ -1590,6 +1706,7 @@ class PlayerWindow(QMainWindow):
             self.seek.setValue(pos)
         self.time_label.setText(f"{format_ms(pos)} / {format_ms(self.player.duration())}")
         self.update_subtitle(pos)
+        self._maybe_ab_loop(pos)
 
     @Slot(int)
     def on_duration_changed(self, dur: int) -> None:
@@ -1627,6 +1744,17 @@ class PlayerWindow(QMainWindow):
         if gen != self._media_gen:
             return
         if self.player.mediaStatus() != QMediaPlayer.MediaStatus.EndOfMedia:
+            return
+        # A-B ループ中は終端で止めず、A 点へ戻して再生を続ける。
+        # ここは遅延実行 (QTimer) の中なので、直接 setPosition しても安全。
+        if self.ab_active():
+            try:
+                self.player.setPosition(self._ab_a)
+                self.player.play()
+            except Exception:
+                pass
+            self.seek.setValue(self._ab_a)
+            self._pending_seek = None
             return
         # プレイリストに次があれば連続再生、なければ停止表示。
         if self._advance_if_in_playlist():
