@@ -14,6 +14,7 @@ from __future__ import annotations
 import bisect
 import json
 import os
+import random
 import re
 import sys
 import time
@@ -120,7 +121,7 @@ def collect_video_files(path: str, recursive: bool = True,
     return out
 
 APP_NAME = "シンプル動画プレイヤー"
-__version__ = "1.21.0"
+__version__ = "1.22.0"
 
 
 def _resource_path(rel: str) -> str:
@@ -147,6 +148,15 @@ RESUME_TAIL_MS = 10000     # 終端側: これより終端に近いと記憶し�
 # 短い動画では動画長に合わせて余裕を縮める。
 RESUME_HEAD_DIV = 10       # 先頭側の余裕は動画長の 1/10 まで下げる
 RESUME_TAIL_DIV = 5        # 終端側の余裕は動画長の 1/5 まで下げる
+
+# プレイリストのリピート 3 モード。この並び順 = ボタン/キーを押したときの巡回順。
+REPEAT_MODES = ("off", "one", "all")
+REPEAT_MENU_LABELS = {
+    "off": "リピートなし",
+    "one": "1 本リピート",
+    "all": "全曲リピート",
+}
+REPEAT_SHORT_LABELS = {"off": "なし", "one": "1 本", "all": "全曲"}
 
 
 def resume_head_ms(dur: int) -> int:
@@ -488,6 +498,8 @@ SHORTCUTS = [
     ("] / [", "再生速度 上げる / 下げる"),
     (", / .", "1 フレーム戻る / 進む"),
     ("Shift+, / Shift+.", "字幕を早める / 遅らせる (0.1 秒ずつ)"),
+    ("Shift+S", "シャッフル再生の ON / OFF"),
+    ("Shift+R", "リピート切替 (なし → 1 本 → 全曲)"),
     ("F / F11", "全画面切替"),
     ("Esc", "全画面を解除"),
     ("F1", "このヘルプを表示"),
@@ -507,6 +519,7 @@ HELP_NOTES = [
     "「字幕」メニューからサイズ・位置・縁取り・文字色・フォントを変更できます。",
     "「字幕」メニューの「背景帯」で字幕の後ろの黒帯を消せます (既定は表示)。",
     "プレイリストはドラッグ、または「上へ」「下へ」で並べ替えできます (順序は保存されます)。",
+    "Shift+S でシャッフル再生、Shift+R でリピート (なし → 1 本 → 全曲) を切り替えます (リスト下のボタンでも同じ)。",
     "A-B リピート: 再生中に A で開始点、B で終了点を決めると、その区間だけを繰り返します (C で解除)。",
     "Ctrl+S で現在のフレームをスクリーンショット (PNG) として動画と同じフォルダに保存します。",
     ", / . で 1 フレームずつ戻る / 進む (再生中に押すと一時停止してから移動します)。",
@@ -601,6 +614,11 @@ class PlayerWindow(QMainWindow):
         self._sub_font = ""
         # 字幕の遅延 (ms)。+ で字幕が遅れて出る。全動画共通で保存する。
         self._sub_delay_ms = 0
+        # プレイリストのシャッフル / リピート。全体設定として保存する。
+        self._shuffle = False
+        self._repeat = "off"
+        # シャッフル再生順 (パスのリスト)。プレイリストが変わったら整える。
+        self._shuffle_paths: list[str] = []
         # 映像の下端に配置 (addStretch で下寄せ)。背景は字幕行の高さのみ。
         self._overlay = QVBoxLayout(self.video)
         self._rebuild_overlay()
@@ -762,6 +780,17 @@ class PlayerWindow(QMainWindow):
         for b in (self.prev_btn, self.next_btn, self.pl_up_btn, self.pl_down_btn):
             b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             pl_bot.addWidget(b)
+        # シャッフル / リピート (Shift+S / Shift+R と同じ操作をボタンでも)。
+        pl_mode = QHBoxLayout()
+        self.shuffle_btn = QPushButton("シャッフル")
+        self.shuffle_btn.setCheckable(True)
+        self.shuffle_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.shuffle_btn.setToolTip("再生順をランダムにします (Shift+S)")
+        self.repeat_btn = QPushButton("リピート: なし")
+        self.repeat_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.repeat_btn.setToolTip("押すたびに なし → 1 本 → 全曲 (Shift+R)")
+        for b in (self.shuffle_btn, self.repeat_btn):
+            pl_mode.addWidget(b)
         self.pl_add_btn.clicked.connect(self.add_files_dialog)
         self.pl_del_btn.clicked.connect(self.remove_selected)
         self.pl_clear_btn.clicked.connect(self.clear_playlist)
@@ -769,9 +798,13 @@ class PlayerWindow(QMainWindow):
         self.next_btn.clicked.connect(self.play_next)
         self.pl_up_btn.clicked.connect(lambda: self.move_selected(-1))
         self.pl_down_btn.clicked.connect(lambda: self.move_selected(+1))
+        # toggle_shuffle ではなく set_shuffle に繋ぐ (ボタン表示の更新も行う)。
+        self.shuffle_btn.toggled.connect(self.set_shuffle)
+        self.repeat_btn.clicked.connect(self.cycle_repeat)
         pl_lay.addLayout(pl_top)
         pl_lay.addWidget(self.playlist, 1)
         pl_lay.addLayout(pl_bot)
+        pl_lay.addLayout(pl_mode)
         self.pl_dock.setWidget(pl_panel)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.pl_dock)
         self.pl_dock.hide()
@@ -933,6 +966,38 @@ class PlayerWindow(QMainWindow):
         play_menu.addAction(self.step_fwd_act)
         self.addAction(self.step_fwd_act)
 
+        # シャッフル / リピート (プレイリスト再生)。メニューに載せつつ、
+        # 全画面 (メニューバー非表示) でも効くようウィンドウ全体にも登録する。
+        play_menu.addSeparator()
+        self.shuffle_act = QAction("シャッフル再生", self)
+        self.shuffle_act.setCheckable(True)
+        self.shuffle_act.setShortcut(
+            QKeySequence(Qt.Key.Key_S | Qt.KeyboardModifier.ShiftModifier))
+        self.shuffle_act.triggered.connect(self.toggle_shuffle)
+        play_menu.addAction(self.shuffle_act)
+        self.addAction(self.shuffle_act)
+
+        self.repeat_act = QAction("リピート切替", self)
+        self.repeat_act.setShortcut(
+            QKeySequence(Qt.Key.Key_R | Qt.KeyboardModifier.ShiftModifier))
+        self.repeat_act.triggered.connect(self.cycle_repeat)
+        play_menu.addAction(self.repeat_act)
+        self.addAction(self.repeat_act)
+
+        repeat_menu = play_menu.addMenu("リピート")
+        self._repeat_group = QActionGroup(self)
+        self._repeat_acts: dict[str, QAction] = {}
+        for mode in REPEAT_MODES:
+            a = QAction(REPEAT_MENU_LABELS[mode], self)
+            a.setCheckable(True)
+            a.setChecked(mode == self._repeat)
+            a.triggered.connect(lambda _=False, m=mode: self.set_repeat(m))
+            self._repeat_group.addAction(a)
+            repeat_menu.addAction(a)
+            self._repeat_acts[mode] = a
+
+        self._repeat_menu = repeat_menu
+
         sub_menu = self.menuBar().addMenu("字幕")
         size_menu = sub_menu.addMenu("サイズ")
         self._sub_size_group = QActionGroup(self)
@@ -1078,6 +1143,8 @@ class PlayerWindow(QMainWindow):
         self._shot_timer = QTimer(self)
         self._shot_timer.setSingleShot(True)
         self._shot_timer.timeout.connect(self._clear_shot_message)
+        # シャッフル / リピートの表示を現在の状態に合わせる (既定はオフ)。
+        self._refresh_playlist_controls()
 
     # ---------- ファイル ----------
     @Slot()
@@ -1193,6 +1260,8 @@ class PlayerWindow(QMainWindow):
             "subtitle_font": self._sub_font,
             "subtitle_delay_ms": self._sub_delay_ms,
             "playlist": self.playlist_paths(),
+            "shuffle": self._shuffle,
+            "repeat": self._repeat,
         }
         try:
             with open(SESSION_FILE, "w", encoding="utf-8") as f:
@@ -1243,6 +1312,14 @@ class PlayerWindow(QMainWindow):
             paths = [p for p in pl if isinstance(p, str)]
             if paths:
                 self.add_to_playlist(paths)
+        # シャッフル / リピート (復元時はメッセージを出さない)。
+        # プレイリストを復元した後に適用する (シャッフル順に並べるため)。
+        shuffle = s.get("shuffle")
+        if isinstance(shuffle, bool):
+            self.set_shuffle(shuffle, notify=False)
+        repeat = s.get("repeat")
+        if isinstance(repeat, str) and repeat in REPEAT_MODES:
+            self.set_repeat(repeat, notify=False)
         self.set_subtitle_color(s.get("subtitle_color"))
         self.set_subtitle_font(s.get("subtitle_font"))
         delay = s.get("subtitle_delay_ms")
@@ -1571,24 +1648,170 @@ class PlayerWindow(QMainWindow):
         return self._step_track(-1)
 
     def _step_track(self, delta: int) -> bool:
-        if self.playlist.count() == 0:
+        row = self._target_row(delta)
+        if row is None:
             return False
+        return self.play_index(row)
+
+    def _row_of(self, path: str) -> int | None:
+        """パスに対応する行番号 (無ければ None)。"""
+        for i in range(self.playlist.count()):
+            if self.playlist.item(i).data(Qt.ItemDataRole.UserRole) == path:
+                return i
+        return None
+
+    def _target_row(self, delta: int) -> int | None:
+        """次 (delta>0) / 前 (delta<0) の曲の行番号。無ければ None。
+
+        シャッフル中は内部の再生順、通常は表示順で辿る。端ではリピートが
+        「全曲」のときだけ反対側へ回り込む (「1 本」は手動送りでは効かせない)。
+        """
+        count = self.playlist.count()
+        if count == 0:
+            return None
+        if self._shuffle:
+            order = self._shuffle_order()
+            if not order:
+                return None
+            if self._current_path in order:
+                i = order.index(self._current_path)
+            elif delta > 0:
+                # リスト外のファイルから進むときは順番の先頭から
+                i = -1
+            else:
+                i = len(order)
+            j = i + delta
+            if 0 <= j < len(order):
+                return self._row_of(order[j])
+            if self._repeat == "all":
+                if delta > 0:
+                    # 一周したので並びを作り直して先頭から
+                    self._rebuild_shuffle_order()
+                    return self._row_of(self._shuffle_paths[0])
+                return self._row_of(order[-1])
+            return None
         row = self.playlist.currentRow()
         if row < 0:
             row = self._index_of_current()
         if row < 0:
-            return self.play_index(0 if delta > 0 else self.playlist.count() - 1)
+            return 0 if delta > 0 else count - 1
         nxt = row + delta
-        if 0 <= nxt < self.playlist.count():
-            return self.play_index(nxt)
-        return False
+        if 0 <= nxt < count:
+            return nxt
+        if self._repeat == "all":
+            # 1 曲だけのリストでも同じ曲を先頭から (再読込して繰り返す)
+            return 0 if delta > 0 else count - 1
+        return None
 
     def _advance_if_in_playlist(self) -> bool:
-        """再生中のファイルがリスト内にある場合のみ「次の曲」へ進む。"""
-        idx = self._index_of_current()
-        if idx < 0 or idx + 1 >= self.playlist.count():
+        """再生が終わったときに次の曲へ進む (シャッフル / リピートを考慮)。
+
+        - 1 本リピート: 同じファイルを先頭から再生し直す (リスト外でも有効)
+        - 全曲リピート: 端まで来たら反対側へ (シャッフル中は組み直して先頭へ)
+        - リピートなし: 次の曲が無ければ False (呼び出し側が停止表示にする)
+        """
+        if self._repeat == "one" and self._current_path:
+            # player.stop() は使わない (_do_stop と同じ理由)
+            try:
+                self.player.setPosition(0)
+                self.player.play()
+            except Exception:
+                return False
+            self.seek.setValue(0)
+            self._pending_seek = None
+            return True
+        if self.playlist.count() == 0 or self._index_of_current() < 0:
+            # リスト外のファイルは連続再生の対象外 (従来どおり停止表示)
             return False
-        return self.play_index(idx + 1)
+        row = self._target_row(+1)
+        return row is not None and self.play_index(row)
+
+    # ---------- シャッフル / リピート ----------
+    def shuffle_enabled(self) -> bool:
+        return self._shuffle
+
+    def repeat_mode(self) -> str:
+        return self._repeat
+
+    def play_mode_text(self) -> str:
+        """シャッフル / リピートの現在値 (操作系に出す文字列)。"""
+        sh = "シャッフル ON" if self._shuffle else "シャッフル OFF"
+        return f"{sh} / リピート: {REPEAT_SHORT_LABELS[self._repeat]}"
+
+    def _rebuild_shuffle_order(self, first: str | None = None) -> None:
+        """シャッフル再生順を作り直す (first があれば先頭に固定)。"""
+        paths = self.playlist_paths()
+        head = ""
+        if first and first in paths:
+            head = first
+            paths = [p for p in paths if p != first]
+        random.shuffle(paths)
+        self._shuffle_paths = ([head] if head else []) + paths
+
+    def _shuffle_order(self) -> list[str]:
+        """現在のプレイリストに合わせてシャッフル順を整えて返す。
+
+        順番はパスで持つので、追加・削除・並べ替えがあっても行番号のずれを
+        気にせず追従できる (消えたパスを落とし、増えたパスを末尾に足す)。
+        """
+        paths = self.playlist_paths()
+        kept = [p for p in self._shuffle_paths if p in paths]
+        missing = [p for p in paths if p not in kept]
+        if missing:
+            random.shuffle(missing)
+        self._shuffle_paths = kept + missing
+        return self._shuffle_paths
+
+    def _refresh_playlist_controls(self) -> None:
+        """シャッフル / リピートの表示を状態に合わせる。"""
+        act = getattr(self, "shuffle_act", None)
+        if act is not None:
+            act.setChecked(self._shuffle)
+        btn = getattr(self, "shuffle_btn", None)
+        if btn is not None:
+            btn.setText("シャッフル ON" if self._shuffle else "シャッフル")
+            # setChecked で toggled を再発火させない (notify=False の復元時に
+            # メッセージが出てしまうため)。
+            blocked = btn.blockSignals(True)
+            btn.setChecked(self._shuffle)
+            btn.blockSignals(blocked)
+        for mode, a in getattr(self, "_repeat_acts", {}).items():
+            a.setChecked(mode == self._repeat)
+        rbtn = getattr(self, "repeat_btn", None)
+        if rbtn is not None:
+            rbtn.setText(f"リピート: {REPEAT_SHORT_LABELS[self._repeat]}")
+
+    def set_shuffle(self, on: bool, notify: bool = True) -> bool:
+        """シャッフル再生の ON/OFF。適用後の値を返す。"""
+        value = bool(on)
+        if value != self._shuffle:
+            self._shuffle = value
+            if value:
+                # 再生中の曲を先頭にして、以降をランダムに並べる
+                self._rebuild_shuffle_order(self._current_path)
+            else:
+                self._shuffle_paths = []
+        self._refresh_playlist_controls()
+        if notify:
+            self._show_shot_message(self.play_mode_text())
+        return self._shuffle
+
+    def toggle_shuffle(self) -> None:
+        self.set_shuffle(not self._shuffle)
+
+    def set_repeat(self, mode: str, notify: bool = True) -> str:
+        """リピート モード (off / one / all)。適用後のモードを返す。"""
+        if mode not in REPEAT_MODES:
+            return self._repeat
+        self._repeat = mode
+        self._refresh_playlist_controls()
+        if notify:
+            self._show_shot_message(self.play_mode_text())
+        return self._repeat
+
+    def cycle_repeat(self) -> str:
+        i = REPEAT_MODES.index(self._repeat)
+        return self.set_repeat(REPEAT_MODES[(i + 1) % len(REPEAT_MODES)])
 
     # ---------- 操作 ----------
     @Slot()
