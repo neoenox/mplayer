@@ -69,6 +69,21 @@ VOLUME_STEP = 5
 # A-B リピートの最短区間 (ms)。これ未満しか離れていない B 点は受け付けない
 # (位置更新の粒度で A と B が同一点になり、無限ループになるのを防ぐ)。
 AB_MIN_GAP_MS = 500
+# 字幕の遅延 (同期ズレ) 調整。1 回の操作で動かす量と、動かせる上限。
+SUB_DELAY_STEP_MS = 100
+SUB_DELAY_LIMIT_MS = 10000
+
+
+def format_sub_delay(ms: int) -> str:
+    """字幕遅延の表示 (例: +0.2 秒 / -0.1 秒 / 0 秒)。"""
+    if not ms:
+        return "0 秒"
+    return f"{ms / 1000:+.1f} 秒"
+
+
+def clamp_sub_delay(ms: int) -> int:
+    """字幕遅延を上限内 (±SUB_DELAY_LIMIT_MS) に丸める。"""
+    return max(-SUB_DELAY_LIMIT_MS, min(SUB_DELAY_LIMIT_MS, int(ms)))
 
 
 def is_video_file(path: str) -> bool:
@@ -105,7 +120,7 @@ def collect_video_files(path: str, recursive: bool = True,
     return out
 
 APP_NAME = "シンプル動画プレイヤー"
-__version__ = "1.19.1"
+__version__ = "1.20.0"
 
 
 def _resource_path(rel: str) -> str:
@@ -442,6 +457,7 @@ SHORTCUTS = [
     ("C", "A-B リピートを解除"),
     ("] / [", "再生速度 上げる / 下げる"),
     (", / .", "1 フレーム戻る / 進む"),
+    ("Shift+, / Shift+.", "字幕を早める / 遅らせる (0.1 秒ずつ)"),
     ("F / F11", "全画面切替"),
     ("Esc", "全画面を解除"),
     ("F1", "このヘルプを表示"),
@@ -464,6 +480,7 @@ HELP_NOTES = [
     "A-B リピート: 再生中に A で開始点、B で終了点を決めると、その区間だけを繰り返します (C で解除)。",
     "Ctrl+S で現在のフレームをスクリーンショット (PNG) として動画と同じフォルダに保存します。",
     ", / . で 1 フレームずつ戻る / 進む (再生中に押すと一時停止してから移動します)。",
+    "Shift+, / Shift+. で字幕を 0.1 秒ずつ早める / 遅らせます (字幕メニューの「遅延」からも操作できます)。",
     "「ファイル」→「プロパティ...」で解像度・フレームレート・ビットレートを確認できます。",
     "終了時に音量・速度・プレイリスト・字幕設定 (表示 ON/OFF 含む) を保存し、次回起動時に復元します。",
     "動画と同じフォルダに同名の .srt があれば、自動で読み込みます。",
@@ -552,6 +569,8 @@ class PlayerWindow(QMainWindow):
         self._sub_encoding = "auto"
         self._sub_color = (255, 255, 255)
         self._sub_font = ""
+        # 字幕の遅延 (ms)。+ で字幕が遅れて出る。全動画共通で保存する。
+        self._sub_delay_ms = 0
         # 映像の下端に配置 (addStretch で下寄せ)。背景は字幕行の高さのみ。
         self._overlay = QVBoxLayout(self.video)
         self._rebuild_overlay()
@@ -948,6 +967,35 @@ class PlayerWindow(QMainWindow):
             self._sub_font_group.addAction(a)
             font_menu.addAction(a)
 
+        # 字幕の遅延 (同期ズレ) 調整。A-B やフレーム送りと同じく、メニューに
+        # 載せつつ全画面でも効くようウィンドウ全体にも登録する。
+        sub_menu.addSeparator()
+        self._sub_delay_menu = sub_menu.addMenu(f"遅延 (±{SUB_DELAY_STEP_MS / 1000:.1f} 秒)")
+        self.sub_delay_act = QAction("字幕を 0.1 秒遅らせる", self)
+        self.sub_delay_act.setShortcut(
+            QKeySequence(Qt.Key.Key_Period | Qt.KeyboardModifier.ShiftModifier))
+        self.sub_delay_act.triggered.connect(self.delay_subtitles)
+        self._sub_delay_menu.addAction(self.sub_delay_act)
+        self.addAction(self.sub_delay_act)
+
+        self.sub_advance_act = QAction("字幕を 0.1 秒早める", self)
+        self.sub_advance_act.setShortcut(
+            QKeySequence(Qt.Key.Key_Comma | Qt.KeyboardModifier.ShiftModifier))
+        self.sub_advance_act.triggered.connect(self.advance_subtitles)
+        self._sub_delay_menu.addAction(self.sub_advance_act)
+        self.addAction(self.sub_advance_act)
+
+        self.sub_delay_reset_act = QAction("遅延をリセット", self)
+        self.sub_delay_reset_act.triggered.connect(self.reset_sub_delay)
+        self._sub_delay_menu.addAction(self.sub_delay_reset_act)
+        self._sub_delay_menu.addSeparator()
+
+        # 現在値の表示 (押せない情報項目)
+        self.sub_delay_info_act = QAction(
+            f"現在: {format_sub_delay(self._sub_delay_ms)}", self)
+        self.sub_delay_info_act.setEnabled(False)
+        self._sub_delay_menu.addAction(self.sub_delay_info_act)
+
         help_menu = self.menuBar().addMenu("ヘルプ")
         self.help_act = QAction("ショートカット一覧", self)
         self.help_act.setShortcut(Qt.Key.Key_F1)
@@ -1113,6 +1161,7 @@ class PlayerWindow(QMainWindow):
             "subtitle_encoding": self._sub_encoding,
             "subtitle_color": list(self._sub_color),
             "subtitle_font": self._sub_font,
+            "subtitle_delay_ms": self._sub_delay_ms,
             "playlist": self.playlist_paths(),
         }
         try:
@@ -1166,6 +1215,10 @@ class PlayerWindow(QMainWindow):
                 self.add_to_playlist(paths)
         self.set_subtitle_color(s.get("subtitle_color"))
         self.set_subtitle_font(s.get("subtitle_font"))
+        delay = s.get("subtitle_delay_ms")
+        if isinstance(delay, int) and not isinstance(delay, bool):
+            # 復元時はメッセージを出さない (起動直後の操作系を汚さない)
+            self.set_sub_delay(delay, notify=False)
 
     def restore_session(self) -> None:
         self._apply_session(self._load_session())
@@ -1352,12 +1405,50 @@ class PlayerWindow(QMainWindow):
     def _cue_text_at(self, pos: int) -> str:
         if not self._cues:
             return ""
-        i = bisect.bisect_right(self._cue_starts, pos) - 1
+        # 遅延は再生位置の方をずらして参照する (+ で字幕が遅れて出る)
+        probe = pos - self._sub_delay_ms
+        i = bisect.bisect_right(self._cue_starts, probe) - 1
         if i >= 0:
             start, end, body = self._cues[i]
-            if start <= pos < end:
+            if start <= probe < end:
                 return body
         return ""
+
+    # ---------- 字幕の遅延 (同期ズレ) 調整 ----------
+    def sub_delay_ms(self) -> int:
+        """現在の字幕遅延 (ms)。+ で字幕が遅れて出る。"""
+        return self._sub_delay_ms
+
+    def set_sub_delay(self, ms: int, notify: bool = True) -> int:
+        """字幕の遅延を設定する (上限内に丸める)。適用後の値を返す。"""
+        value = clamp_sub_delay(ms)
+        if value == self._sub_delay_ms:
+            if notify:
+                self._show_shot_message(f"字幕の遅延: {format_sub_delay(value)}")
+            return value
+        self._sub_delay_ms = value
+        self.sub_delay_info_act.setText(f"現在: {format_sub_delay(value)}")
+        # 表示中の字幕を即座に切り替える (次の位置更新を待たない)
+        self.update_subtitle(self.player.position())
+        if notify:
+            self._show_shot_message(f"字幕の遅延: {format_sub_delay(value)}")
+        return value
+
+    def nudge_sub_delay(self, delta_ms: int) -> int:
+        """遅延を delta_ms だけ動かす (上限で止まる)。"""
+        return self.set_sub_delay(self._sub_delay_ms + delta_ms)
+
+    @Slot()
+    def delay_subtitles(self) -> None:
+        self.nudge_sub_delay(SUB_DELAY_STEP_MS)
+
+    @Slot()
+    def advance_subtitles(self) -> None:
+        self.nudge_sub_delay(-SUB_DELAY_STEP_MS)
+
+    @Slot()
+    def reset_sub_delay(self) -> None:
+        self.set_sub_delay(0)
 
     def update_subtitle(self, pos: int) -> None:
         text = self._cue_text_at(pos) if self._subs_enabled else ""
