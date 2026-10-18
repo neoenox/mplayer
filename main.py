@@ -120,7 +120,7 @@ def collect_video_files(path: str, recursive: bool = True,
     return out
 
 APP_NAME = "シンプル動画プレイヤー"
-__version__ = "1.20.0"
+__version__ = "1.21.0"
 
 
 def _resource_path(rel: str) -> str:
@@ -140,8 +140,38 @@ SESSION_FILE = os.environ.get(
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "session.json"),
 )
 RESUME_MAX_ENTRIES = 100
-RESUME_MIN_MS = 5000       # これより手前は記憶しない (先頭とみなす)
-RESUME_TAIL_MS = 10000     # 終端付近は記憶しない (視聴済みとみなす)
+RESUME_MIN_MS = 5000       # 先頭側: これより手前は記憶しない (上限値)
+RESUME_TAIL_MS = 10000     # 終端側: これより終端に近いと記憶しない (上限値)
+# 上の固定値のままだと「記憶できる範囲」が動画より長くなり、15 秒未満の
+# 動画は常に対象外になる (30 秒の動画も 5〜20 秒しか記憶できない)。
+# 短い動画では動画長に合わせて余裕を縮める。
+RESUME_HEAD_DIV = 10       # 先頭側の余裕は動画長の 1/10 まで下げる
+RESUME_TAIL_DIV = 5        # 終端側の余裕は動画長の 1/5 まで下げる
+
+
+def resume_head_ms(dur: int) -> int:
+    """先頭付近を「先頭とみなす」余裕 (ms)。短い動画では動画長に合わせて縮める。"""
+    if dur <= 0:
+        return RESUME_MIN_MS
+    return min(RESUME_MIN_MS, dur // RESUME_HEAD_DIV)
+
+
+def resume_tail_ms(dur: int) -> int:
+    """終端付近を「視聴済みとみなす」余裕 (ms)。短い動画では縮める。"""
+    if dur <= 0:
+        return RESUME_TAIL_MS
+    return min(RESUME_TAIL_MS, dur // RESUME_TAIL_DIV)
+
+
+def resume_pos_saveable(pos: int, dur: int) -> bool:
+    """この位置を「続きから再生」用に記憶してよいか。
+
+    先頭付近 (見始めたばかり) と終端付近 (見終わった) は記憶しない。
+    余裕は動画長に応じて縮めるので、短い動画でも途中再開できる。
+    """
+    if dur <= 0:
+        return False
+    return resume_head_ms(dur) < pos < dur - resume_tail_ms(dur)
 
 
 def format_ms(ms: int) -> str:
@@ -1122,7 +1152,7 @@ class PlayerWindow(QMainWindow):
             if not path:
                 return
             pos, dur = self.player.position(), self.player.duration()
-            if dur > 0 and RESUME_MIN_MS < pos < dur - RESUME_TAIL_MS:
+            if resume_pos_saveable(pos, dur):
                 self._resume.pop(path, None)
                 self._resume[path] = {"pos": pos}
                 self._save_resume()
@@ -2172,7 +2202,7 @@ class PlayerWindow(QMainWindow):
         # 前回位置の復元 (1回のみ)。範囲外は無視し、安全な遅延経路を使う。
         if self._restore_pos is not None:
             pos, self._restore_pos = self._restore_pos, None
-            if dur > 0 and RESUME_MIN_MS < pos < dur - RESUME_TAIL_MS:
+            if resume_pos_saveable(pos, dur):
                 self._post_seek(pos)
 
     @Slot(QMediaPlayer.PlaybackState)
