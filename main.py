@@ -16,6 +16,7 @@ import json
 import os
 import re
 import sys
+import time
 
 from PySide6.QtCore import QEvent, QPointF, Qt, QTimer, QUrl, Slot
 from PySide6.QtGui import (
@@ -104,7 +105,7 @@ def collect_video_files(path: str, recursive: bool = True,
     return out
 
 APP_NAME = "シンプル動画プレイヤー"
-__version__ = "1.17.0"
+__version__ = "1.18.0"
 
 
 def _resource_path(rel: str) -> str:
@@ -353,6 +354,7 @@ class SubtitleLabel(QLabel):
 # キーボードショートカット (ヘルプ表示とテストで共用)。
 SHORTCUTS = [
     ("Ctrl+O", "ファイルを開く"),
+    ("Ctrl+S", "スクリーンショットを保存"),
     ("Space", "再生 / 一時停止"),
     ("← / →", "5秒戻る / 5秒進む"),
     ("Ctrl+← / Ctrl+→", "前の動画 / 次の動画"),
@@ -382,6 +384,7 @@ HELP_NOTES = [
     "「字幕」メニューの「背景帯」で字幕の後ろの黒帯を消せます (既定は表示)。",
     "プレイリストはドラッグ、または「上へ」「下へ」で並べ替えできます (順序は保存されます)。",
     "A-B リピート: 再生中に A で開始点、B で終了点を決めると、その区間だけを繰り返します (C で解除)。",
+    "Ctrl+S で現在のフレームをスクリーンショット (PNG) として動画と同じフォルダに保存します。",
     "終了時に音量・速度・プレイリスト・字幕設定 (表示 ON/OFF 含む) を保存し、次回起動時に復元します。",
     "動画と同じフォルダに同名の .srt があれば、自動で読み込みます。",
 ]
@@ -546,6 +549,11 @@ class PlayerWindow(QMainWindow):
         self.ab_label.setToolTip("A-B リピート: A で開始点、B で終了点、C で解除")
         self.ab_label.hide()
 
+        # スクリーンショット保存の一時メッセージ (数秒で自動的に消える)。
+        self.shot_label = QLabel("")
+        self.shot_label.setObjectName("shot_label")
+        self.shot_label.hide()
+
         self.fs_btn = QPushButton("全画面")
         self.fs_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.fs_btn.clicked.connect(self.toggle_fullscreen)
@@ -565,6 +573,7 @@ class PlayerWindow(QMainWindow):
         bottom_row.addWidget(self.subs_btn)
         bottom_row.addWidget(self.pl_btn)
         bottom_row.addWidget(self.ab_label)
+        bottom_row.addWidget(self.shot_label)
         bottom_row.addStretch(1)
         bottom_row.addWidget(self.fs_btn)
 
@@ -646,6 +655,12 @@ class PlayerWindow(QMainWindow):
         self.player.mediaStatusChanged.connect(self.on_media_status)
         self.player.errorChanged.connect(self.on_error)
         self.audio.setVolume(0.8)
+        # スクリーンショット用: 表示中フレームを保持する。
+        # QVideoWidget の内蔵シンクから受け取る (映像は widget が描画する)。
+        try:
+            self.video.videoSink().videoFrameChanged.connect(self._on_video_frame)
+        except Exception:
+            pass
 
         # --- メニュー / ショートカット ---
         file_menu = self.menuBar().addMenu("ファイル")
@@ -661,6 +676,17 @@ class PlayerWindow(QMainWindow):
         pl_add_act = QAction("プレイリストに追加...", self)
         pl_add_act.triggered.connect(self.add_files_dialog)
         file_menu.addAction(pl_add_act)
+
+        # スクリーンショット: Ctrl+S で即保存 (既定の保存先) と、名前を付けて保存。
+        self.shot_act = QAction("スクリーンショットを保存", self)
+        self.shot_act.setShortcut(QKeySequence("Ctrl+S"))
+        self.shot_act.triggered.connect(lambda: self.screenshot())
+        file_menu.addAction(self.shot_act)
+        self.addAction(self.shot_act)
+
+        self.shot_as_act = QAction("スクリーンショットを名前を付けて保存...", self)
+        self.shot_as_act.triggered.connect(lambda: self.screenshot_dialog())
+        file_menu.addAction(self.shot_as_act)
 
         self.fs_act = QAction("全画面切替", self)
         self.fs_act.setShortcut(Qt.Key.Key_F11)
@@ -863,6 +889,12 @@ class PlayerWindow(QMainWindow):
         # 別の動画を開くと解除される (セッションには保存しない)。
         self._ab_a: int | None = None
         self._ab_b: int | None = None
+        # スクリーンショット: 直近のフレームと、メッセージを表示する時間 (ms)。
+        self._last_frame = None
+        self._shot_hide_ms = 3000
+        self._shot_timer = QTimer(self)
+        self._shot_timer.setSingleShot(True)
+        self._shot_timer.timeout.connect(self._clear_shot_message)
 
     # ---------- ファイル ----------
     @Slot()
@@ -886,6 +918,9 @@ class PlayerWindow(QMainWindow):
         self.clear_subtitles()
         # A-B リピートはファイル単位の設定。別の動画を開いたら解除する。
         self.clear_ab()
+        # スクリーンショット用に保持したフレームも破棄する (前の動画の映像を
+        # 保存してしまわないように)。
+        self._last_frame = None
         self.player.setSource(QUrl.fromLocalFile(path))
         self.play_btn.setEnabled(True)
         self.stop_btn.setEnabled(True)
@@ -1482,6 +1517,97 @@ class PlayerWindow(QMainWindow):
             return
         self.seek.setValue(a)
         self._post_seek(a)
+
+    # ---------- スクリーンショット ----------
+    def _on_video_frame(self, frame) -> None:
+        """表示中のフレームを保持する (スクリーンショット用)。"""
+        try:
+            if frame is not None and frame.isValid():
+                self._last_frame = frame
+        except Exception:
+            pass
+
+    def screenshot_image(self):
+        """現在のフレームを QImage で返す (取得できないときは None)。"""
+        frame = self._last_frame
+        if frame is None:
+            return None
+        try:
+            if not frame.isValid():
+                return None
+            image = frame.toImage()
+        except Exception:
+            return None
+        return None if image.isNull() else image
+
+    def default_screenshot_path(self) -> str | None:
+        """既定の保存先を返す。動画と同じフォルダに「動画名_日時.png」。
+
+        動画を開いていないときは None。同じ秒に続けて保存した場合に
+        上書きしないよう、既にある名前は連番を付けて避ける。
+        """
+        if not self._current_path:
+            return None
+        stem = os.path.splitext(os.path.basename(self._current_path))[0]
+        folder = os.path.dirname(self._current_path)
+        base = f"{stem}_{time.strftime('%Y%m%d-%H%M%S')}"
+        target = os.path.join(folder, base + ".png")
+        n = 2
+        while os.path.exists(target):
+            target = os.path.join(folder, f"{base}_{n}.png")
+            n += 1
+        return target
+
+    def screenshot(self, path: str | None = None) -> str | None:
+        """現在のフレームを PNG で保存し、保存先を返す (失敗時は None)。
+
+        保存先を省略した場合は動画と同じフォルダへ保存する。
+        失敗しても例外にせず、状態表示にメッセージを出すだけにする。
+        """
+        target = path or self.default_screenshot_path()
+        if not target:
+            self._show_shot_message("保存できません: 動画を開いてください")
+            return None
+        image = self.screenshot_image()
+        if image is None:
+            self._show_shot_message("保存できません: 映像が出ていません")
+            return None
+        try:
+            ok = bool(image.save(target, "PNG"))
+        except Exception:
+            ok = False
+        if not ok:
+            self._show_shot_message(f"保存に失敗しました: {os.path.basename(target)}")
+            return None
+        self._show_shot_message(f"スクリーンショットを保存: {os.path.basename(target)}")
+        return target
+
+    def screenshot_dialog(self) -> None:
+        """保存先を選んでスクリーンショットを保存する。"""
+        default = self.default_screenshot_path()
+        if not default:
+            self._show_shot_message("保存できません: 動画を開いてください")
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "スクリーンショットを保存", default, "PNG 画像 (*.png)")
+        if not path:
+            return
+        if not path.lower().endswith(".png"):
+            path += ".png"
+        self.screenshot(path)
+
+    def _show_shot_message(self, text: str) -> None:
+        self.shot_label.setText(text)
+        self.shot_label.setVisible(True)
+        # 全画面で操作系が隠れているときは、メッセージが見えるように出す。
+        if self._is_fullscreen and not self.controls.isVisible():
+            self._show_fs_controls()
+            self._fs_timer.start(self._fs_hide_ms)
+        self._shot_timer.start(self._shot_hide_ms)
+
+    def _clear_shot_message(self) -> None:
+        self.shot_label.setText("")
+        self.shot_label.hide()
 
     @Slot()
     def cycle_speed(self) -> None:
