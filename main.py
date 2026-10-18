@@ -33,7 +33,7 @@ from PySide6.QtGui import (
     QTextLayout,
     QTextOption,
 )
-from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
+from PySide6.QtMultimedia import QAudioOutput, QMediaMetaData, QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -105,7 +105,7 @@ def collect_video_files(path: str, recursive: bool = True,
     return out
 
 APP_NAME = "シンプル動画プレイヤー"
-__version__ = "1.18.1"
+__version__ = "1.19.0"
 
 
 def _resource_path(rel: str) -> str:
@@ -138,6 +138,83 @@ def format_ms(ms: int) -> str:
     if h > 0:
         return f"{h:02d}:{m:02d}:{s:02d}"
     return f"{m:02d}:{s:02d}"
+
+
+# ---------- 1 フレーム送り ----------
+FRAME_STEP_FALLBACK_MS = 33  # fps が取れないときの 1 フレーム (約 30fps)
+
+
+def frame_step_ms_for(fps) -> int:
+    """fps から 1 フレームの長さ (ms) を求める。
+
+    取得できない・異常な値のときは 33ms (約 30fps) とみなす。
+    """
+    try:
+        value = float(fps)
+    except (TypeError, ValueError):
+        return FRAME_STEP_FALLBACK_MS
+    if not 0.5 <= value <= 240:
+        return FRAME_STEP_FALLBACK_MS
+    return max(1, int(round(1000.0 / value)))
+
+
+def _fmt_resolution(size) -> str:
+    try:
+        if size is not None and size.width() > 0 and size.height() > 0:
+            return f"{size.width()} x {size.height()}"
+    except Exception:
+        pass
+    return ""
+
+
+def _fmt_fps(rate) -> str:
+    try:
+        value = float(rate)
+    except (TypeError, ValueError):
+        return ""
+    return f"{value:g} fps" if value > 0 else ""
+
+
+def _fmt_kbps(bits) -> str:
+    try:
+        value = int(bits)
+    except (TypeError, ValueError):
+        return ""
+    return f"{value / 1000:.0f} kbps" if value > 0 else ""
+
+
+def _fmt_hdr(flag) -> str:
+    return "あり" if flag else ""
+
+
+def _fmt_bytes(size) -> str:
+    try:
+        value = int(size)
+    except (TypeError, ValueError):
+        return ""
+    return f"{value / (1024 * 1024):.1f} MB ({value:,} バイト)"
+
+
+def _fmt_codec(value) -> str:
+    """コーデックの enum を表示用の名前にする (判別できなければ空)。"""
+    name = getattr(value, "name", None)
+    if isinstance(name, str) and name and name != "Unknown":
+        return name
+    text = str(value)
+    return "" if (not text or text.startswith("<")) else text
+
+
+# プロパティに表示する項目。取得できないキーは例外を握って省く
+# (PySide6 6.12 + FFmpeg ではコーデックの enum が変換できず取得できない)。
+META_ROWS = [
+    ("解像度", QMediaMetaData.Key.Resolution, _fmt_resolution),
+    ("フレームレート", QMediaMetaData.Key.VideoFrameRate, _fmt_fps),
+    ("映像コーデック", QMediaMetaData.Key.VideoCodec, _fmt_codec),
+    ("音声コーデック", QMediaMetaData.Key.AudioCodec, _fmt_codec),
+    ("映像ビットレート", QMediaMetaData.Key.VideoBitRate, _fmt_kbps),
+    ("音声ビットレート", QMediaMetaData.Key.AudioBitRate, _fmt_kbps),
+    ("HDR", QMediaMetaData.Key.HasHdrContent, _fmt_hdr),
+]
 
 
 def _parse_srt_timestamp(text: str) -> int:
@@ -364,6 +441,7 @@ SHORTCUTS = [
     ("A / B", "A-B リピートの A 点 / B 点を設定"),
     ("C", "A-B リピートを解除"),
     ("] / [", "再生速度 上げる / 下げる"),
+    (", / .", "1 フレーム戻る / 進む"),
     ("F / F11", "全画面切替"),
     ("Esc", "全画面を解除"),
     ("F1", "このヘルプを表示"),
@@ -385,6 +463,8 @@ HELP_NOTES = [
     "プレイリストはドラッグ、または「上へ」「下へ」で並べ替えできます (順序は保存されます)。",
     "A-B リピート: 再生中に A で開始点、B で終了点を決めると、その区間だけを繰り返します (C で解除)。",
     "Ctrl+S で現在のフレームをスクリーンショット (PNG) として動画と同じフォルダに保存します。",
+    ", / . で 1 フレームずつ戻る / 進む (再生中に押すと一時停止してから移動します)。",
+    "「ファイル」→「プロパティ...」で解像度・フレームレート・ビットレートを確認できます。",
     "終了時に音量・速度・プレイリスト・字幕設定 (表示 ON/OFF 含む) を保存し、次回起動時に復元します。",
     "動画と同じフォルダに同名の .srt があれば、自動で読み込みます。",
 ]
@@ -690,6 +770,11 @@ class PlayerWindow(QMainWindow):
         self.shot_as_act = QAction("スクリーンショットを名前を付けて保存...", self)
         self.shot_as_act.triggered.connect(lambda: self.screenshot_dialog())
         file_menu.addAction(self.shot_as_act)
+        file_menu.addSeparator()
+
+        self.props_act = QAction("プロパティ...", self)
+        self.props_act.triggered.connect(self.show_media_info)
+        file_menu.addAction(self.props_act)
 
         self.fs_act = QAction("全画面切替", self)
         self.fs_act.setShortcut(Qt.Key.Key_F11)
@@ -783,6 +868,21 @@ class PlayerWindow(QMainWindow):
         self.ab_clear_act.triggered.connect(self.clear_ab)
         play_menu.addAction(self.ab_clear_act)
         self.addAction(self.ab_clear_act)
+
+        # 1 フレーム送り: 一時停止して 1 フレームずつ確認する (A-B と同じく
+        # メニューに載せつつ、全画面でも効くようウィンドウ全体にも登録)。
+        play_menu.addSeparator()
+        self.step_back_act = QAction("1 フレーム戻る", self)
+        self.step_back_act.setShortcut(QKeySequence(Qt.Key.Key_Comma))
+        self.step_back_act.triggered.connect(self.step_frame_back)
+        play_menu.addAction(self.step_back_act)
+        self.addAction(self.step_back_act)
+
+        self.step_fwd_act = QAction("1 フレーム進む", self)
+        self.step_fwd_act.setShortcut(QKeySequence(Qt.Key.Key_Period))
+        self.step_fwd_act.triggered.connect(self.step_frame_forward)
+        play_menu.addAction(self.step_fwd_act)
+        self.addAction(self.step_fwd_act)
 
         sub_menu = self.menuBar().addMenu("字幕")
         size_menu = sub_menu.addMenu("サイズ")
@@ -1448,6 +1548,52 @@ class PlayerWindow(QMainWindow):
         self.seek.setValue(target)
         self._post_seek(target)
 
+    # ---------- 1 フレーム送り ----------
+    def frame_step_ms(self) -> int:
+        """1 フレームの長さ (ms)。fps が取れないときは 33ms とみなす。"""
+        try:
+            rate = self.player.metaData().value(
+                QMediaMetaData.Key.VideoFrameRate)
+        except Exception:
+            rate = None
+        return frame_step_ms_for(rate)
+
+    def step_frame(self, delta: int) -> bool:
+        """1 フレームだけ移動する (delta: -1 = 戻る / +1 = 進む)。
+
+        再生中に押したときは一時停止してから移動する。端では動かさず False。
+        連続入力時は予約中の位置を基準に累積する。
+        """
+        if not self._current_path or self.player.duration() <= 0 or delta == 0:
+            return False
+        if self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
+            self._remember_current()
+            self.player.pause()
+        base = self._pending_seek
+        if base is None:
+            base = self.player.position()
+        # 終端は duration - 1 までに抑える (終端で EOS にしない)。
+        limit = max(0, self.player.duration() - 1)
+        # 端では「進む」で戻る、「戻る」で進むような逆走を起こさない。
+        if delta > 0 and base >= limit:
+            return False
+        if delta < 0 and base <= 0:
+            return False
+        target = min(max(base + self.frame_step_ms() * delta, 0), limit)
+        if target == base:
+            return False
+        self.seek.setValue(target)
+        self._post_seek(target)
+        return True
+
+    @Slot()
+    def step_frame_back(self) -> None:
+        self.step_frame(-1)
+
+    @Slot()
+    def step_frame_forward(self) -> None:
+        self.step_frame(1)
+
     # ---------- A-B リピート (区間リピート) ----------
     def ab_state(self) -> tuple[int | None, int | None]:
         """(A 点, B 点)。未設定は None。"""
@@ -1639,6 +1785,69 @@ class PlayerWindow(QMainWindow):
     def _clear_shot_message(self) -> None:
         self.shot_label.setText("")
         self.shot_label.hide()
+
+    # ---------- プロパティ (メディア情報) ----------
+    def _meta_text(self, key, formatter, meta=None) -> str:
+        """メタデータを表示用の文字列にする。
+
+        未対応のキー (PySide6 が変換できないコーデックなど) や例外は
+        握りつぶして空文字にする。プロパティ表示が落ちないことを優先する。
+        meta を渡すと取得済みのメタデータを使い回す (毎回のコピーを避ける)。
+        """
+        if meta is None:
+            try:
+                meta = self.player.metaData()
+            except Exception:
+                return ""
+        try:
+            value = meta.value(key)
+        except Exception:
+            return ""
+        if value is None or value == "":
+            return ""
+        try:
+            return formatter(value)
+        except Exception:
+            return ""
+
+    def media_info_lines(self) -> list[tuple[str, str]]:
+        """「プロパティ」に出す (項目, 値)。取得できない項目は省く。"""
+        rows: list[tuple[str, str]] = []
+        path = self._current_path
+        if path and os.path.isfile(path):
+            rows.append(("ファイル", os.path.basename(path)))
+            rows.append(("場所", os.path.dirname(path)))
+            try:
+                rows.append(("サイズ", _fmt_bytes(os.path.getsize(path))))
+            except OSError:
+                pass
+        if self.player.duration() > 0:
+            rows.append(("長さ", format_ms(self.player.duration())))
+        try:
+            meta = self.player.metaData()
+        except Exception:
+            meta = None
+        for label, key, formatter in META_ROWS:
+            text = self._meta_text(key, formatter, meta) if meta is not None else ""
+            if text:
+                rows.append((label, text))
+        return rows
+
+    def media_info_text(self) -> str:
+        """プロパティの本文 (1 行 1 項目)。テストと表示で共用。"""
+        return "\n".join(f"{label}: {value}"
+                         for label, value in self.media_info_lines())
+
+    @Slot()
+    def show_media_info(self) -> None:
+        """「プロパティ」ダイアログを表示する (動画未ロードでも落とさない)。"""
+        if not self._current_path:
+            QMessageBox.information(self, "プロパティ",
+                                    "動画を開いていません。")
+            return
+        body = self.media_info_text() or "(取得できる情報がありません)"
+        QMessageBox.information(self, "プロパティ",
+                                f"{APP_NAME} v{__version__}\n\n{body}")
 
     @Slot()
     def cycle_speed(self) -> None:
