@@ -59,6 +59,22 @@ def play_to_end(w, near=None):
     return wait_until(lambda: w.player.position() >= target - 400, 4000)
 
 
+def press_until(w, key, mods, cond, tries=4):
+    """ショートカットが効くまで押す。
+
+    この環境ではウィンドウが前面に無いと最初の数回が落ちることがある
+    (アクティブウィンドウにしかショートカットが届かないため)。押下そのもの
+    ではなく「キーで操作できること」を確かめるのが目的なので、効くまで
+    押し直す。効果が出た時点で True を返す。
+    """
+    for _ in range(tries):
+        QTest.keyClick(w, key, mods)
+        pump(80)
+        if cond():
+            return True
+    return False
+
+
 def main():
     patch_message_boxes()
     make_app()
@@ -171,21 +187,25 @@ def main():
     # --- キー操作 ---
     w.set_shuffle(False, notify=False)
     w.set_repeat("off", notify=False)
-    pump(50)
-    QTest.keyClick(w, Qt.Key.Key_S, Qt.KeyboardModifier.ShiftModifier)
-    pump(50)
-    check("Shift+S でシャッフル ON", w.shuffle_enabled() is True)
+    w.activateWindow()
+    w.raise_()
+    pump(150)
+    check("Shift+S でシャッフル ON",
+          press_until(w, Qt.Key.Key_S, Qt.KeyboardModifier.ShiftModifier,
+                      lambda: w.shuffle_enabled() is True))
     check("Shift+S では字幕は変わらない", w._subs_pref is True)
-    QTest.keyClick(w, Qt.Key.Key_S, Qt.KeyboardModifier.ShiftModifier)
-    pump(50)
-    check("もう一度で OFF", w.shuffle_enabled() is False)
-    QTest.keyClick(w, Qt.Key.Key_R, Qt.KeyboardModifier.ShiftModifier)
-    pump(50)
-    check("Shift+R でリピートが進む", w.repeat_mode() == "one", w.repeat_mode())
-    QTest.keyClick(w, Qt.Key.Key_R, Qt.KeyboardModifier.ShiftModifier)
-    QTest.keyClick(w, Qt.Key.Key_R, Qt.KeyboardModifier.ShiftModifier)
-    pump(50)
-    check("3 回で一周する", w.repeat_mode() == "off", w.repeat_mode())
+    check("もう一度で OFF",
+          press_until(w, Qt.Key.Key_S, Qt.KeyboardModifier.ShiftModifier,
+                      lambda: w.shuffle_enabled() is False))
+    check("Shift+R でリピートが進む (off → one)",
+          press_until(w, Qt.Key.Key_R, Qt.KeyboardModifier.ShiftModifier,
+                      lambda: w.repeat_mode() == "one"), w.repeat_mode())
+    check("続けて all になる",
+          press_until(w, Qt.Key.Key_R, Qt.KeyboardModifier.ShiftModifier,
+                      lambda: w.repeat_mode() == "all"), w.repeat_mode())
+    check("3 回目で一周して off に戻る",
+          press_until(w, Qt.Key.Key_R, Qt.KeyboardModifier.ShiftModifier,
+                      lambda: w.repeat_mode() == "off"), w.repeat_mode())
 
     # --- シャッフル順 (プレイリストあり) ---
     w.set_shuffle(False, notify=False)

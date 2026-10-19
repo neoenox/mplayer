@@ -121,7 +121,7 @@ def collect_video_files(path: str, recursive: bool = True,
     return out
 
 APP_NAME = "シンプル動画プレイヤー"
-__version__ = "1.22.0"
+__version__ = "1.23.0"
 
 
 def _resource_path(rel: str) -> str:
@@ -158,6 +158,16 @@ REPEAT_MENU_LABELS = {
 }
 REPEAT_SHORT_LABELS = {"off": "なし", "one": "1 本", "all": "全曲"}
 
+# ウィンドウ位置・サイズの既定値と下限。保存値が壊れていたり、モニタ構成が
+# 変わって画面外になっていたりしたときは既定 (960x600) で開く。
+WINDOW_DEFAULT_W = 960
+WINDOW_DEFAULT_H = 600
+WINDOW_MIN_W = 480
+WINDOW_MIN_H = 320
+# 画面内に最低これだけ見えていれば許容する (端に寄せた配置を弾かないため)
+WINDOW_MIN_VISIBLE_W = 100
+WINDOW_MIN_VISIBLE_H = 40
+
 
 def resume_head_ms(dur: int) -> int:
     """先頭付近を「先頭とみなす」余裕 (ms)。短い動画では動画長に合わせて縮める。"""
@@ -182,6 +192,40 @@ def resume_pos_saveable(pos: int, dur: int) -> bool:
     if dur <= 0:
         return False
     return resume_head_ms(dur) < pos < dur - resume_tail_ms(dur)
+
+
+def sanitize_window_rect(x, y, w, h, screens=()) -> tuple[int, int, int, int] | None:
+    """保存されたウィンドウの位置・サイズを検証し、使える矩形を返す。
+
+    使えないときは None (呼び出し側は既定のサイズ・位置で開く)。
+
+    - 数値でない値 (文字列・真偽値・None) は不可
+    - サイズは下限〜画面の大きさに丸める
+    - 画面内にほとんど見えない位置 (画面外・モニタ構成の変更) は不可
+    """
+    if not all(isinstance(v, int) and not isinstance(v, bool)
+               for v in (x, y, w, h)):
+        return None
+    areas = [s.availableGeometry() for s in screens] if screens else []
+    if not areas:
+        # 画面情報が取れない環境では下限だけ適用して受け入れる
+        return (x, y, max(w, WINDOW_MIN_W), max(h, WINDOW_MIN_H))
+    max_w = max(WINDOW_MIN_W, max(a.width() for a in areas))
+    max_h = max(WINDOW_MIN_H, max(a.height() for a in areas))
+    w = min(max(w, WINDOW_MIN_W), max_w)
+    h = min(max(h, WINDOW_MIN_H), max_h)
+    for a in areas:
+        # 左上が画面内にあれば通常の配置
+        if (a.x() <= x < a.x() + a.width()
+                and a.y() <= y < a.y() + a.height()):
+            return (x, y, w, h)
+    for a in areas:
+        # 左上が外でも、最低限見えていれば掴めるので許容する
+        overlap_w = min(x + w, a.x() + a.width()) - max(x, a.x())
+        overlap_h = min(y + h, a.y() + a.height()) - max(y, a.y())
+        if overlap_w >= WINDOW_MIN_VISIBLE_W and overlap_h >= WINDOW_MIN_VISIBLE_H:
+            return (x, y, w, h)
+    return None
 
 
 def format_ms(ms: int) -> str:
@@ -520,6 +564,7 @@ HELP_NOTES = [
     "「字幕」メニューの「背景帯」で字幕の後ろの黒帯を消せます (既定は表示)。",
     "プレイリストはドラッグ、または「上へ」「下へ」で並べ替えできます (順序は保存されます)。",
     "Shift+S でシャッフル再生、Shift+R でリピート (なし → 1 本 → 全曲) を切り替えます (リスト下のボタンでも同じ)。",
+    "終了時のウィンドウ位置・サイズ・プレイリストの表示状態を記憶し、次回起動時に復元します (画面外になっていたときは既定のサイズで開きます)。",
     "A-B リピート: 再生中に A で開始点、B で終了点を決めると、その区間だけを繰り返します (C で解除)。",
     "Ctrl+S で現在のフレームをスクリーンショット (PNG) として動画と同じフォルダに保存します。",
     ", / . で 1 フレームずつ戻る / 進む (再生中に押すと一時停止してから移動します)。",
@@ -582,7 +627,7 @@ class PlayerWindow(QMainWindow):
         self.setWindowTitle(f"{APP_NAME} v{__version__}")
         if os.path.isfile(ICON_PATH):
             self.setWindowIcon(QIcon(ICON_PATH))
-        self.resize(960, 600)
+        self.resize(WINDOW_DEFAULT_W, WINDOW_DEFAULT_H)
         self.setAcceptDrops(True)
 
         # --- 再生エンジン ---
@@ -1102,6 +1147,13 @@ class PlayerWindow(QMainWindow):
         help_menu.addAction(about_act)
         self._help_dialog: HelpDialog | None = None
         self._is_fullscreen = False
+        # 全画面に入る前のウィンドウ矩形と最大化状態 (全画面のまま終了しても
+        # 通常時の位置を保存できるように控える)。
+        self._fs_rect: tuple[int, int, int, int] | None = None
+        self._fs_maximized = False
+        # show() の後に適用する起動時の状態 (最大化 / プレイリスト表示)。
+        self._pending_maximized = False
+        self._pending_dock = False
         # 全画面で操作が無いとき操作系を隠すまでの待ち時間 (ms)。テストで短縮可能。
         self._fs_hide_ms = 2500
         self._fs_timer = QTimer(self)
@@ -1262,6 +1314,7 @@ class PlayerWindow(QMainWindow):
             "playlist": self.playlist_paths(),
             "shuffle": self._shuffle,
             "repeat": self._repeat,
+            "window": self.window_state_for_save(),
         }
         try:
             with open(SESSION_FILE, "w", encoding="utf-8") as f:
@@ -1326,9 +1379,73 @@ class PlayerWindow(QMainWindow):
         if isinstance(delay, int) and not isinstance(delay, bool):
             # 復元時はメッセージを出さない (起動直後の操作系を汚さない)
             self.set_sub_delay(delay, notify=False)
+        # ウィンドウの位置・サイズ (最大化とパネル表示は show() の後に適用)
+        self.apply_window_state(s.get("window"))
 
     def restore_session(self) -> None:
         self._apply_session(self._load_session())
+
+    # ---------- ウィンドウの位置・サイズ ----------
+    def window_rect_for_save(self) -> tuple[int, int, int, int]:
+        """保存用のウィンドウ矩形。全画面・最大化中は通常時の位置を返す。"""
+        if self._is_fullscreen and self._fs_rect is not None:
+            return self._fs_rect
+        r = self.normalGeometry() if self.isMaximized() else self.geometry()
+        return (r.x(), r.y(), r.width(), r.height())
+
+    def window_state_for_save(self) -> dict:
+        """位置・サイズ・最大化・プレイリストの表示状態 (session.json 用)。
+
+        全画面のまま終了した場合は、全画面に入る前の状態を保存する
+        (次回は全画面ではなく通常のウィンドウで開く)。
+        """
+        x, y, w, h = self.window_rect_for_save()
+        if self._is_fullscreen:
+            maximized = self._fs_maximized
+            dock = self._dock_visible_before_fs
+        else:
+            maximized = self.isMaximized()
+            dock = self.pl_btn.isChecked()
+        return {
+            "x": x,
+            "y": y,
+            "w": w,
+            "h": h,
+            "maximized": bool(maximized),
+            "playlist_dock": bool(dock),
+        }
+
+    def apply_window_state(self, s) -> bool:
+        """保存したウィンドウ状態を適用する (適用できたら True)。
+
+        位置・サイズは今すぐ効くが、最大化とプレイリストの表示は show() の
+        後にする。表示前に切り替えるとウィンドウが意図せず出たり、ドックの
+        表示状態が元に戻ったりするため。
+        """
+        if not isinstance(s, dict):
+            return False
+        rect = sanitize_window_rect(
+            s.get("x"), s.get("y"), s.get("w"), s.get("h"),
+            QApplication.screens() or ())
+        if rect is None:
+            return False
+        self.setGeometry(*rect)
+        self._pending_maximized = s.get("maximized") is True
+        self._pending_dock = s.get("playlist_dock") is True
+        return True
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        # 起動時の 1 回だけ、最大化とプレイリストの表示を復元する。
+        if self._pending_maximized or self._pending_dock:
+            maximized = self._pending_maximized
+            dock = self._pending_dock
+            self._pending_maximized = False
+            self._pending_dock = False
+            if dock:
+                self.pl_btn.setChecked(True)
+            if maximized:
+                QTimer.singleShot(0, self.showMaximized)
 
     # ---------- 字幕 ----------
     @staticmethod
@@ -2248,6 +2365,10 @@ class PlayerWindow(QMainWindow):
         if self._is_fullscreen:
             self.exit_fullscreen()
         else:
+            # 全画面に入る前の状態を控える (全画面のまま終了しても通常時の
+            # 位置を保存できるように)。
+            self._fs_rect = self.window_rect_for_save()
+            self._fs_maximized = self.isMaximized()
             self._is_fullscreen = True
             self._dock_visible_before_fs = self.pl_dock.isVisible()
             self.pl_dock.hide()
@@ -2261,6 +2382,7 @@ class PlayerWindow(QMainWindow):
     def exit_fullscreen(self) -> None:
         if self._is_fullscreen:
             self._is_fullscreen = False
+            self._fs_rect = None
             self._fs_timer.stop()
             self._show_fs_controls()
             self.showNormal()
