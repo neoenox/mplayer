@@ -24,11 +24,11 @@ os.environ["MPLAYER_SESSION_FILE"] = SESSION
 if os.path.isfile(RESUME):
     os.remove(RESUME)
 
-from helpers import check, finish, make_app, patch_message_boxes, silence, wait_until
+from helpers import (check, finish, make_app, patch_message_boxes, press_key,
+                     silence, wait_until)
 
 from PySide6.QtCore import QEventLoop, Qt, QTimer
 from PySide6.QtMultimedia import QMediaPlayer
-from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QMenu
 
 from main import AB_MIN_GAP_MS, HELP_NOTES, SHORTCUTS, PlayerWindow
@@ -191,12 +191,13 @@ def main():
           w.ab_label.text())
 
     # --- C キーで解除 / A・B キー (キー入力1回で1回だけ発火) ---
+    # キーはアクティブなウィンドウにしか届かないため press_key を使う
+    # (効かなかったときだけ押し直す。発火回数は別途検査する)。
     fired = {"a": 0, "b": 0, "c": 0}
     w.ab_a_act.triggered.connect(lambda: fired.__setitem__("a", fired["a"] + 1))
     w.ab_b_act.triggered.connect(lambda: fired.__setitem__("b", fired["b"] + 1))
     w.ab_clear_act.triggered.connect(lambda: fired.__setitem__("c", fired["c"] + 1))
-    QTest.keyClick(w, Qt.Key.Key_C)
-    pump(120)
+    press_key(w, Qt.Key.Key_C, cond=lambda: w.ab_state() == (None, None))
     check("C キーで全解除", w.ab_state() == (None, None), str(w.ab_state()))
     check("C キーは1回だけ発火", fired["c"] == 1, str(fired["c"]))
     check("解除でラベルが消える", not w.ab_label.isVisible())
@@ -204,23 +205,19 @@ def main():
 
     w.player.setPosition(1000)
     settle(w, 1000, 500)
-    QTest.keyClick(w, Qt.Key.Key_A)
-    pump(120)
+    press_key(w, Qt.Key.Key_A, cond=lambda: w.ab_state()[0] is not None)
     check("A キーで A 点が入る",
           fired["a"] == 1 and w.ab_state()[0] is not None, str(w.ab_state()))
     w.player.setPosition(4000)
     settle(w, 4000, 600)
-    QTest.keyClick(w, Qt.Key.Key_B)
-    pump(120)
+    press_key(w, Qt.Key.Key_B, cond=lambda: w.ab_state()[1] is not None)
     check("B キーでループが始まる",
           fired["b"] == 1 and w.ab_state()[1] is not None, str(w.ab_state()))
     check("B キーは1回だけ発火", fired["b"] == 1, str(fired["b"]))
-    QTest.keyClick(w, Qt.Key.Key_C)
-    pump(120)
+    press_key(w, Qt.Key.Key_C, cond=lambda: w.ab_state() == (None, None))
     check("C キーで再解除", w.ab_state() == (None, None), str(w.ab_state()))
     check("2回目の C も1回だけ発火", fired["c"] == 2, str(fired["c"]))
-    QTest.keyClick(w, Qt.Key.Key_C)
-    pump(120)
+    press_key(w, Qt.Key.Key_C)
     check("未設定で C を押しても落ちない", w.ab_state() == (None, None))
 
     # --- 全画面でも設定できる ---
@@ -229,12 +226,10 @@ def main():
     check("全画面へ入る", w._is_fullscreen is True)
     w.player.setPosition(1000)
     settle(w, 1000, 500)
-    QTest.keyClick(w, Qt.Key.Key_A)
-    pump(120)
+    press_key(w, Qt.Key.Key_A, cond=lambda: w.ab_state()[0] is not None)
     w.player.setPosition(5000)
     settle(w, 5000, 600)
-    QTest.keyClick(w, Qt.Key.Key_B)
-    pump(120)
+    press_key(w, Qt.Key.Key_B, cond=lambda: w.ab_state()[1] is not None)
     check("全画面でも A-B を設定できる", w.ab_active() is True, str(w.ab_state()))
     w.exit_fullscreen()
     pump(60)

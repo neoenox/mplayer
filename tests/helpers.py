@@ -2,7 +2,7 @@
 import os
 import sys
 
-from PySide6.QtCore import QEventLoop, QTimer
+from PySide6.QtCore import QEventLoop, QTimer, Qt
 from PySide6.QtMultimedia import QMediaPlayer
 from PySide6.QtWidgets import QApplication, QMessageBox
 
@@ -65,6 +65,55 @@ def wait_until(pred, timeout_ms=10000, poll_ms=100):
     return state["done"]
 
 
+def pump(ms=0):
+    """ms ミリ秒だけイベントループを回す。"""
+    loop = QEventLoop()
+    QTimer.singleShot(ms, loop.quit)
+    loop.exec()
+
+
+def activate_window(w, timeout_ms=800, poll_ms=30):
+    """ウィンドウを前面に出す (前面にできたら True)。
+
+    ショートカットはアクティブなウィンドウにしか届かない。この環境では
+    表示直後や時間経過のあとに OS 側のフォーカスが外れていることがあり、
+    そのままキーを押しても黙って捨てられる (テストがまぐれで落ちる原因)。
+    キーを押す前に前面へ戻すために使う。
+    """
+    try:
+        if w.isActiveWindow():
+            return True
+        w.raise_()
+        w.activateWindow()
+        # WindowActive を立てると OS に前面化を要求できる (全画面/最大化は保つ)
+        w.setWindowState(w.windowState() | Qt.WindowState.WindowActive)
+    except Exception:
+        return False
+    return wait_until(w.isActiveWindow, timeout_ms, poll_ms)
+
+
+def press_key(w, key, mods=None, cond=None, tries=3, wait_ms=120):
+    """キーを押す (押す前にウィンドウを前面に出す)。
+
+    cond を渡すと、その条件が満たされるまで押し直す。前面に無いときの
+    キー入力は捨てられて状態が変わらないので、効くまで押し直しても
+    二重発火にはならない (1 回で効けば 1 回で止まる)。「1 回のキー入力で
+    1 回だけ発火する」ことを確かめるテストでは、cond に「効果が出たか」を
+    渡してから、発火回数を別途検査する。
+    """
+    from PySide6.QtTest import QTest
+
+    if mods is None:
+        mods = Qt.KeyboardModifier.NoModifier
+    for _ in range(max(1, tries)):
+        activate_window(w)
+        QTest.keyClick(w, key, mods)
+        pump(wait_ms)
+        if cond is None or cond():
+            return True
+    return False
+
+
 def first_bytes(path, n=8):
     """ファイルの先頭 n バイト (開けない/存在しないときは None)。
 
@@ -100,6 +149,7 @@ def wait_for_frame(w, timeout_ms=7000, attempts=3, nudge_ms=200):
 
 def make_app():
     app = QApplication(sys.argv)
+    _patch_key_clicks()
     import faulthandler
     dump_secs = os.environ.get("MPLAYER_DUMP_SECS")
     dump_file = os.environ.get("MPLAYER_DUMP_FILE")
@@ -121,6 +171,34 @@ def make_app():
     auto.start()
     app._auto = auto  # GC防止 (参照保持)
     return app
+
+
+def _patch_key_clicks():
+    """QTest.keyClick を「押す前にウィンドウを前面に出す」版に差し替える。
+
+    この環境では前面に無いウィンドウのショートカットが無視され、キー入力が
+    黙って捨てられることがある (テストがまぐれで落ちる原因)。各テストが
+    個別に対応しなくて済むよう、make_app() から 1 回だけ差し替える。
+    マウス操作や qWait はそのまま (元の実装に委譲する)。
+    """
+    from PySide6.QtTest import QTest
+
+    if getattr(QTest.keyClick, "_mplayer_activated", False):
+        return
+    original = QTest.keyClick
+
+    def keyClick(widget, *args, **kwargs):
+        window = getattr(widget, "window", None)
+        if callable(window):
+            try:
+                activate_window(window())
+            except Exception:
+                pass
+        return original(widget, *args, **kwargs)
+
+    keyClick._mplayer_activated = True
+    keyClick._mplayer_original = original
+    QTest.keyClick = keyClick
 
 
 def finish(name):
