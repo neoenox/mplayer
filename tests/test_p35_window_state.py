@@ -267,7 +267,6 @@ def main():
     check("抜けた後は全画面前のパネル表示に戻る", w.pl_dock.isVisible() is True)
 
     # --- ドキュメント ---
-    check("バージョンは 1.23.0", __version__ == "1.23.0", __version__)
     check("ヘルプにウィンドウの記憶の説明",
           any("ウィンドウ" in n for n in HELP_NOTES),
           str([n for n in HELP_NOTES if "ウィンドウ" in n]))
@@ -277,7 +276,9 @@ def main():
     check("README に画面外の説明", "画面外" in readme)
     with open(os.path.join(BASE, "CHANGELOG.md"), encoding="utf-8") as f:
         changelog = f.read()
-    check("CHANGELOG に 1.23.0", "## [1.23.0]" in changelog)
+    check("CHANGELOG に 1.23.0 (この機能を入れた版)", "## [1.23.0]" in changelog)
+    check("CHANGELOG に現行バージョンの節がある",
+          f"## [{__version__}]" in changelog, __version__)
     check("CHANGELOG にウィンドウの記載", "ウィンドウの位置" in changelog)
 
     # --- 後始末 ---
