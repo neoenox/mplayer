@@ -47,6 +47,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPushButton,
     QSlider,
@@ -121,7 +122,7 @@ def collect_video_files(path: str, recursive: bool = True,
     return out
 
 APP_NAME = "シンプル動画プレイヤー"
-__version__ = "1.23.0"
+__version__ = "1.24.0"
 
 
 def _resource_path(rel: str) -> str:
@@ -157,6 +158,9 @@ REPEAT_MENU_LABELS = {
     "all": "全曲リピート",
 }
 REPEAT_SHORT_LABELS = {"off": "なし", "one": "1 本", "all": "全曲"}
+
+# 「最近使ったファイル」の保持件数 (メニューに出る件数も同じ)。
+RECENT_MAX = 10
 
 # ウィンドウ位置・サイズの既定値と下限。保存値が壊れていたり、モニタ構成が
 # 変わって画面外になっていたりしたときは既定 (960x600) で開く。
@@ -226,6 +230,37 @@ def sanitize_window_rect(x, y, w, h, screens=()) -> tuple[int, int, int, int] | 
         if overlap_w >= WINDOW_MIN_VISIBLE_W and overlap_h >= WINDOW_MIN_VISIBLE_H:
             return (x, y, w, h)
     return None
+
+
+def recent_key(path: str) -> str:
+    """履歴の重複判定に使うキー (大文字小文字や ./ や .. の違いを吸収する)。"""
+    return os.path.normcase(os.path.abspath(path))
+
+
+def recent_add(paths, path: str, limit: int = RECENT_MAX) -> list[str]:
+    """履歴の先頭に path を足す。
+
+    同じファイル (大文字小文字・相対パスの違いを無視して同一) は 1 つにまとめ、
+    最後に開いたものが先頭に来る。上限を超えた分は古い方から落とす。
+    """
+    kept = [p for p in paths if isinstance(p, str)]
+    if not path:
+        return kept[:limit]
+    absolute = os.path.abspath(path)
+    key = recent_key(absolute)
+    out = [absolute]
+    for p in kept:
+        if recent_key(p) != key:
+            out.append(p)
+    return out[:limit]
+
+
+def recent_prune(paths, exists=os.path.isfile) -> list[str]:
+    """存在しないファイルを履歴から除く (順序は保つ)。
+
+    exists はテストで差し替えられるように引数にしてある。
+    """
+    return [p for p in paths if isinstance(p, str) and exists(p)]
 
 
 def format_ms(ms: int) -> str:
@@ -565,6 +600,7 @@ HELP_NOTES = [
     "プレイリストはドラッグ、または「上へ」「下へ」で並べ替えできます (順序は保存されます)。",
     "Shift+S でシャッフル再生、Shift+R でリピート (なし → 1 本 → 全曲) を切り替えます (リスト下のボタンでも同じ)。",
     "終了時のウィンドウ位置・サイズ・プレイリストの表示状態を記憶し、次回起動時に復元します (画面外になっていたときは既定のサイズで開きます)。",
+    "「ファイル」→「最近使ったファイル」に直近 10 件を残します (消えたファイルは自動で外れ、「履歴をクリア」で消せます)。",
     "A-B リピート: 再生中に A で開始点、B で終了点を決めると、その区間だけを繰り返します (C で解除)。",
     "Ctrl+S で現在のフレームをスクリーンショット (PNG) として動画と同じフォルダに保存します。",
     ", / . で 1 フレームずつ戻る / 進む (再生中に押すと一時停止してから移動します)。",
@@ -884,6 +920,13 @@ class PlayerWindow(QMainWindow):
         pl_add_act.triggered.connect(self.add_files_dialog)
         file_menu.addAction(pl_add_act)
         file_menu.addSeparator()
+
+        # 最近使ったファイル (終了時に保存し、次回起動時に復元する)
+        self._recent: list[str] = []
+        self.recent_menu = QMenu("最近使ったファイル", self)
+        file_menu.addMenu(self.recent_menu)
+        file_menu.addSeparator()
+        self._refresh_recent_menu()
 
         # スクリーンショット: Ctrl+S で即保存 (既定の保存先) と、名前を付けて保存。
         # メニューとウィンドウ全体の両方に登録し、全画面 (メニューバー非表示) でも
@@ -1215,6 +1258,9 @@ class PlayerWindow(QMainWindow):
         self._media_gen += 1
         self._pending_seek = None
         self._current_path = os.path.abspath(path)
+        # 「最近使ったファイル」の先頭に置く (同じファイルは 1 つにまとめる)
+        self._recent = recent_add(self._recent, self._current_path)
+        self._refresh_recent_menu()
         self._restore_pos = self._resume_pos_for(self._current_path)
         # 字幕をリセットし、同名 .srt があれば自動で読み込む
         self.clear_subtitles()
@@ -1297,6 +1343,41 @@ class PlayerWindow(QMainWindow):
         except Exception:
             return {}
 
+    def _refresh_recent_menu(self) -> None:
+        """「最近使ったファイル」メニューを作り直す。"""
+        self.recent_menu.clear()
+        if not self._recent:
+            empty = self.recent_menu.addAction("(履歴はありません)")
+            empty.setEnabled(False)
+            return
+        for path in self._recent:
+            act = self.recent_menu.addAction(os.path.basename(path) or path)
+            act.setData(path)
+            act.setToolTip(path)
+            act.setStatusTip(path)
+            act.triggered.connect(lambda _checked=False, p=path: self.open_recent(p))
+        self.recent_menu.addSeparator()
+        clear_act = self.recent_menu.addAction("履歴をクリア")
+        clear_act.triggered.connect(self.clear_recent)
+
+    def open_recent(self, path: str) -> None:
+        """履歴から開く。消えているファイルは履歴から除く。"""
+        if not os.path.isfile(path):
+            QMessageBox.warning(self, "エラー", f"ファイルが見つかりません:\n{path}")
+            self._forget_recent(path)
+            return
+        self.load(path)
+
+    def _forget_recent(self, path: str) -> None:
+        key = recent_key(path)
+        self._recent = [p for p in self._recent if recent_key(p) != key]
+        self._refresh_recent_menu()
+
+    def clear_recent(self) -> None:
+        """履歴を空にする (ファイルは消さない)。"""
+        self._recent = []
+        self._refresh_recent_menu()
+
     def _save_session(self) -> None:
         data = {
             "volume": self.vol.value(),
@@ -1315,6 +1396,8 @@ class PlayerWindow(QMainWindow):
             "shuffle": self._shuffle,
             "repeat": self._repeat,
             "window": self.window_state_for_save(),
+            # 消えているファイルはここで掃除する (履歴が延び続けないように)
+            "recent": recent_prune(self._recent),
         }
         try:
             with open(SESSION_FILE, "w", encoding="utf-8") as f:
@@ -1379,6 +1462,11 @@ class PlayerWindow(QMainWindow):
         if isinstance(delay, int) and not isinstance(delay, bool):
             # 復元時はメッセージを出さない (起動直後の操作系を汚さない)
             self.set_sub_delay(delay, notify=False)
+        # 最近使ったファイル (消えているファイルはここで除く)
+        recent = s.get("recent")
+        if isinstance(recent, list):
+            self._recent = recent_prune(recent)[:RECENT_MAX]
+            self._refresh_recent_menu()
         # ウィンドウの位置・サイズ (最大化とパネル表示は show() の後に適用)
         self.apply_window_state(s.get("window"))
 
