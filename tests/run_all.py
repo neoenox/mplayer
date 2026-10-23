@@ -19,6 +19,7 @@ if not os.path.exists(VENV_PY):
 LOGDIR = os.path.join(BASE, "test_logs")
 
 STAGES = [
+    ("runner_validation", "tests/test_runner_validation.py", 30),
     ("p6_controls", "tests/test_p6_controls.py", 60),
     ("p0_decode", "tests/test_p0_decode.py", 150),
     ("p1a_open_play", "tests/test_p1a_open_play.py", 100),
@@ -121,6 +122,10 @@ def main():
     ap.add_argument("--python", default=None, help="使用するPython (既定: MPLAYER_PYTHONか.venv)")
     ap.add_argument("stages", nargs="*", help="実行するステージ名 (省略時は全部)")
     args = ap.parse_args()
+    valid_stages = {alias for name, rel, _ in STAGES for alias in (name, rel)}
+    unknown_stages = sorted(set(args.stages) - valid_stages)
+    if unknown_stages:
+        ap.error(f"unknown stage(s): {', '.join(unknown_stages)}")
     global VENV_PY
     if args.python:
         if os.path.exists(args.python):
