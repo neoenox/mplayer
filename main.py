@@ -17,6 +17,7 @@ import os
 import random
 import re
 import sys
+import tempfile
 import time
 
 from PySide6.QtCore import QEvent, QPointF, Qt, QTimer, QUrl, Slot
@@ -86,6 +87,33 @@ def format_sub_delay(ms: int) -> str:
 def clamp_sub_delay(ms: int) -> int:
     """字幕遅延を上限内 (±SUB_DELAY_LIMIT_MS) に丸める。"""
     return max(-SUB_DELAY_LIMIT_MS, min(SUB_DELAY_LIMIT_MS, int(ms)))
+
+
+def _atomic_write_json(path: str, data: dict, *, indent: int | None = None) -> None:
+    """JSONを同じディレクトリの一時ファイルへ書き、原子的に置き換える。"""
+    directory = os.path.dirname(os.path.abspath(path))
+    os.makedirs(directory, exist_ok=True)
+    temp_name = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=directory,
+            prefix=os.path.basename(path) + ".",
+            suffix=".tmp",
+            delete=False,
+        ) as temp:
+            temp_name = temp.name
+            json.dump(data, temp, ensure_ascii=False, indent=indent)
+            temp.flush()
+            os.fsync(temp.fileno())
+        os.replace(temp_name, path)
+    finally:
+        if temp_name is not None:
+            try:
+                os.unlink(temp_name)
+            except FileNotFoundError:
+                pass
 
 
 def is_video_file(path: str) -> bool:
@@ -1296,8 +1324,7 @@ class PlayerWindow(QMainWindow):
         try:
             while len(self._resume) > RESUME_MAX_ENTRIES:
                 self._resume.pop(next(iter(self._resume)))
-            with open(RESUME_FILE, "w", encoding="utf-8") as f:
-                json.dump(self._resume, f, ensure_ascii=False)
+            _atomic_write_json(RESUME_FILE, self._resume)
         except Exception:
             pass
 
@@ -1400,8 +1427,7 @@ class PlayerWindow(QMainWindow):
             "recent": recent_prune(self._recent),
         }
         try:
-            with open(SESSION_FILE, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
+            _atomic_write_json(SESSION_FILE, data, indent=2)
         except Exception:
             pass
 
