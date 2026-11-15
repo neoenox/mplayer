@@ -19,6 +19,8 @@ import re
 import sys
 import time
 
+from json_persistence import atomic_write_json
+
 from PySide6.QtCore import QEvent, QPointF, Qt, QTimer, QUrl, Slot
 from PySide6.QtGui import (
     QAction,
@@ -1296,8 +1298,7 @@ class PlayerWindow(QMainWindow):
         try:
             while len(self._resume) > RESUME_MAX_ENTRIES:
                 self._resume.pop(next(iter(self._resume)))
-            with open(RESUME_FILE, "w", encoding="utf-8") as f:
-                json.dump(self._resume, f, ensure_ascii=False)
+            atomic_write_json(RESUME_FILE, self._resume, ensure_ascii=False)
         except Exception:
             pass
 
@@ -1400,8 +1401,7 @@ class PlayerWindow(QMainWindow):
             "recent": recent_prune(self._recent),
         }
         try:
-            with open(SESSION_FILE, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
+            atomic_write_json(SESSION_FILE, data, ensure_ascii=False, indent=2)
         except Exception:
             pass
 
