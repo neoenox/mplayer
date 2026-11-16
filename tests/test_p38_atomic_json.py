@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 import tempfile
@@ -13,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from helpers import check, finish
 import json_persistence
 from json_persistence import atomic_write_json
+import main as player_main
 
 
 def main() -> int:
@@ -70,6 +72,77 @@ def main() -> int:
             "serialization failure removes temporary file",
             not list(root.glob(".resume.json.*.tmp")),
         )
+
+
+    class _Value:
+        def __init__(self, value):
+            self._value = value
+
+        def value(self):
+            return self._value
+
+        def isChecked(self):
+            return self._value
+
+    class _SessionOwner:
+        _resume = {}
+        vol = _Value(50)
+        mute_btn = _Value(False)
+        _rates = [1.0]
+        _rate_idx = 0
+        _sub_size = 20
+        _sub_pos = 80
+        _sub_outline = 1
+        _sub_bg = 0
+        _subs_pref = True
+        _sub_encoding = "UTF-8"
+        _sub_color = (255, 255, 255)
+        _sub_font = "Arial"
+        _sub_delay_ms = 0
+        _shuffle = False
+        _repeat = False
+        _recent = []
+
+        def playlist_paths(self):
+            return []
+
+        def window_state_for_save(self):
+            return {}
+
+    class _CaptureHandler(logging.Handler):
+        def __init__(self):
+            super().__init__()
+            self.records = []
+
+        def emit(self, record):
+            self.records.append(record)
+
+    logger = logging.getLogger(player_main.__name__)
+    handler = _CaptureHandler()
+    original_writer = player_main.atomic_write_json
+
+    def fail_write(*args, **kwargs):
+        raise OSError("simulated disk full")
+
+    logger.addHandler(handler)
+    player_main.atomic_write_json = fail_write
+    try:
+        owner = _SessionOwner()
+        player_main.PlayerWindow._save_resume(owner)
+        player_main.PlayerWindow._save_session(owner)
+    finally:
+        player_main.atomic_write_json = original_writer
+        logger.removeHandler(handler)
+
+    messages = [record.getMessage() for record in handler.records]
+    check(
+        "resume save failure is logged",
+        any("Failed to save resume state" in message for message in messages),
+    )
+    check(
+        "session save failure is logged",
+        any("Failed to save session state" in message for message in messages),
+    )
 
     return finish("P38")
 
