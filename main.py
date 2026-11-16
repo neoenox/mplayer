@@ -13,11 +13,14 @@ from __future__ import annotations
 
 import bisect
 import json
+import logging
 import os
 import random
 import re
 import sys
 import time
+
+from json_persistence import atomic_write_json
 
 from PySide6.QtCore import QEvent, QPointF, Qt, QTimer, QUrl, Slot
 from PySide6.QtGui import (
@@ -1296,10 +1299,11 @@ class PlayerWindow(QMainWindow):
         try:
             while len(self._resume) > RESUME_MAX_ENTRIES:
                 self._resume.pop(next(iter(self._resume)))
-            with open(RESUME_FILE, "w", encoding="utf-8") as f:
-                json.dump(self._resume, f, ensure_ascii=False)
+            atomic_write_json(RESUME_FILE, self._resume, ensure_ascii=False)
         except Exception:
-            pass
+            logging.getLogger(__name__).exception(
+                "Failed to save resume state to %s", RESUME_FILE
+            )
 
     def _resume_pos_for(self, path: str | None) -> int | None:
         if not path:
@@ -1400,10 +1404,11 @@ class PlayerWindow(QMainWindow):
             "recent": recent_prune(self._recent),
         }
         try:
-            with open(SESSION_FILE, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
+            atomic_write_json(SESSION_FILE, data, ensure_ascii=False, indent=2)
         except Exception:
-            pass
+            logging.getLogger(__name__).exception(
+                "Failed to save session state to %s", SESSION_FILE
+            )
 
     def _apply_session(self, s: dict) -> None:
         if not isinstance(s, dict):

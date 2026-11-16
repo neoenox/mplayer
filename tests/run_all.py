@@ -59,6 +59,7 @@ STAGES = [
     ("p34_shuffle_repeat", "tests/test_p34_shuffle_repeat.py", 180),
     ("p35_window_state", "tests/test_p35_window_state.py", 180),
     ("p36_recent_files", "tests/test_p36_recent_files.py", 180),
+    ("p38_atomic_json", "tests/test_p38_atomic_json.py", 60),
 ]
 
 
