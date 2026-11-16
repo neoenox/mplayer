@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import bisect
 import json
+import logging
 import os
 import random
 import re
@@ -1300,7 +1301,9 @@ class PlayerWindow(QMainWindow):
                 self._resume.pop(next(iter(self._resume)))
             atomic_write_json(RESUME_FILE, self._resume, ensure_ascii=False)
         except Exception:
-            pass
+            logging.getLogger(__name__).exception(
+                "Failed to save resume state to %s", RESUME_FILE
+            )
 
     def _resume_pos_for(self, path: str | None) -> int | None:
         if not path:
@@ -1403,7 +1406,9 @@ class PlayerWindow(QMainWindow):
         try:
             atomic_write_json(SESSION_FILE, data, ensure_ascii=False, indent=2)
         except Exception:
-            pass
+            logging.getLogger(__name__).exception(
+                "Failed to save session state to %s", SESSION_FILE
+            )
 
     def _apply_session(self, s: dict) -> None:
         if not isinstance(s, dict):
