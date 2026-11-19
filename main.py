@@ -74,6 +74,8 @@ AB_MIN_GAP_MS = 500
 # 字幕の遅延 (同期ズレ) 調整。1 回の操作で動かす量と、動かせる上限。
 SUB_DELAY_STEP_MS = 100
 SUB_DELAY_LIMIT_MS = 10000
+# ファイル単位の字幕遅延を覚えておく件数 (最後に触ったものから残す)。
+SUB_DELAY_MAX_ENTRIES = 100
 
 
 def format_sub_delay(ms: int) -> str:
@@ -86,6 +88,42 @@ def format_sub_delay(ms: int) -> str:
 def clamp_sub_delay(ms: int) -> int:
     """字幕遅延を上限内 (±SUB_DELAY_LIMIT_MS) に丸める。"""
     return max(-SUB_DELAY_LIMIT_MS, min(SUB_DELAY_LIMIT_MS, int(ms)))
+
+
+def sanitize_sub_delay_map(value, limit=SUB_DELAY_MAX_ENTRIES) -> dict[str, int]:
+    """保存された「ファイル単位の字幕遅延」を検証し、使える分だけ返す。
+
+    - dict でない、キーが文字列でない、値が整数でない (真偽値を含む) ものは捨てる
+    - 値は遅延の上限内に丸める
+    - 上限を超えた分は古い方から落とす
+    """
+    out: dict[str, int] = {}
+    if not isinstance(value, dict):
+        return out
+    for path, ms in value.items():
+        if isinstance(path, str) and isinstance(ms, int) and not isinstance(ms, bool):
+            out[path] = clamp_sub_delay(ms)
+    while len(out) > limit:
+        out.pop(next(iter(out)))
+    return out
+
+
+def remember_sub_delay(mapping, path, ms: int,
+                       limit=SUB_DELAY_MAX_ENTRIES) -> dict[str, int]:
+    """ファイル単位の字幕遅延を更新した写しを返す。
+
+    - 0 に戻したら「覚えていない」状態に戻す (次に開いたときは 0 から)
+    - 同じファイルは最後の位置へ移す (上限で落とすとき古い順に落とすため)
+    """
+    out = dict(mapping)
+    if not path:
+        return out
+    out.pop(path, None)
+    if ms:
+        out[path] = clamp_sub_delay(ms)
+    while len(out) > limit:
+        out.pop(next(iter(out)))
+    return out
 
 
 def is_video_file(path: str) -> bool:
@@ -122,7 +160,7 @@ def collect_video_files(path: str, recursive: bool = True,
     return out
 
 APP_NAME = "シンプル動画プレイヤー"
-__version__ = "1.24.0"
+__version__ = "1.25.0"
 
 
 def _resource_path(rel: str) -> str:
@@ -605,6 +643,7 @@ HELP_NOTES = [
     "Ctrl+S で現在のフレームをスクリーンショット (PNG) として動画と同じフォルダに保存します。",
     ", / . で 1 フレームずつ戻る / 進む (再生中に押すと一時停止してから移動します)。",
     "Shift+, / Shift+. で字幕を 0.1 秒ずつ早める / 遅らせます (字幕メニューの「遅延」からも操作できます)。",
+    "字幕の遅延は動画ごとに覚えます (別の動画を開くと、その動画で前回合わせた値に戻ります)。",
     "「ファイル」→「プロパティ...」で解像度・フレームレート・ビットレートを確認できます。",
     "終了時に音量・速度・プレイリスト・字幕設定 (表示 ON/OFF 含む) を保存し、次回起動時に復元します。",
     "動画と同じフォルダに同名の .srt があれば、自動で読み込みます。",
@@ -693,8 +732,10 @@ class PlayerWindow(QMainWindow):
         self._sub_encoding = "auto"
         self._sub_color = (255, 255, 255)
         self._sub_font = ""
-        # 字幕の遅延 (ms)。+ で字幕が遅れて出る。全動画共通で保存する。
+        # 字幕の遅延 (ms)。+ で字幕が遅れて出る。
+        # 動画ごとに覚える (`_sub_delays`: パス → ms)。開いたときにその値へ切り替える。
         self._sub_delay_ms = 0
+        self._sub_delays: dict[str, int] = {}
         # プレイリストのシャッフル / リピート。全体設定として保存する。
         self._shuffle = False
         self._repeat = "off"
@@ -1153,7 +1194,7 @@ class PlayerWindow(QMainWindow):
         # 字幕の遅延 (同期ズレ) 調整。A-B やフレーム送りと同じく、メニューに
         # 載せつつ全画面でも効くようウィンドウ全体にも登録する。
         sub_menu.addSeparator()
-        self._sub_delay_menu = sub_menu.addMenu(f"遅延 (±{SUB_DELAY_STEP_MS / 1000:.1f} 秒)")
+        self._sub_delay_menu = sub_menu.addMenu(f"遅延 (±{SUB_DELAY_LIMIT_MS / 1000:.0f} 秒)")
         self.sub_delay_act = QAction("字幕を 0.1 秒遅らせる", self)
         self.sub_delay_act.setShortcut(
             QKeySequence(Qt.Key.Key_Period | Qt.KeyboardModifier.ShiftModifier))
@@ -1261,6 +1302,8 @@ class PlayerWindow(QMainWindow):
         # 「最近使ったファイル」の先頭に置く (同じファイルは 1 つにまとめる)
         self._recent = recent_add(self._recent, self._current_path)
         self._refresh_recent_menu()
+        # 字幕の遅延はファイル単位 (前のファイルの値を引きずらない)
+        self.set_sub_delay(self._sub_delays.get(self._current_path, 0), notify=False)
         self._restore_pos = self._resume_pos_for(self._current_path)
         # 字幕をリセットし、同名 .srt があれば自動で読み込む
         self.clear_subtitles()
@@ -1392,6 +1435,8 @@ class PlayerWindow(QMainWindow):
             "subtitle_color": list(self._sub_color),
             "subtitle_font": self._sub_font,
             "subtitle_delay_ms": self._sub_delay_ms,
+            # 動画ごとの字幕遅延 (パス → ms)
+            "subtitle_delay_files": sanitize_sub_delay_map(self._sub_delays),
             "playlist": self.playlist_paths(),
             "shuffle": self._shuffle,
             "repeat": self._repeat,
@@ -1458,6 +1503,9 @@ class PlayerWindow(QMainWindow):
             self.set_repeat(repeat, notify=False)
         self.set_subtitle_color(s.get("subtitle_color"))
         self.set_subtitle_font(s.get("subtitle_font"))
+        delays = s.get("subtitle_delay_files")
+        if isinstance(delays, dict):
+            self._sub_delays = sanitize_sub_delay_map(delays)
         delay = s.get("subtitle_delay_ms")
         if isinstance(delay, int) and not isinstance(delay, bool):
             # 復元時はメッセージを出さない (起動直後の操作系を汚さない)
@@ -1734,6 +1782,10 @@ class PlayerWindow(QMainWindow):
     def set_sub_delay(self, ms: int, notify: bool = True) -> int:
         """字幕の遅延を設定する (上限内に丸める)。適用後の値を返す。"""
         value = clamp_sub_delay(ms)
+        # ファイル単位の遅延として覚える (0 に戻したら忘れる)。
+        # 値が同じでも記憶を触る (上限到達時の古い方からの除外を正しくするため)。
+        self._sub_delays = remember_sub_delay(
+            self._sub_delays, self._current_path, value)
         if value == self._sub_delay_ms:
             if notify:
                 self._show_shot_message(f"字幕の遅延: {format_sub_delay(value)}")
@@ -1895,9 +1947,10 @@ class PlayerWindow(QMainWindow):
                     return self._row_of(self._shuffle_paths[0])
                 return self._row_of(order[-1])
             return None
-        row = self.playlist.currentRow()
+        row = self._index_of_current()
         if row < 0:
-            row = self._index_of_current()
+            # 再生中でなければ選択行を基準にする
+            row = self.playlist.currentRow()
         if row < 0:
             return 0 if delta > 0 else count - 1
         nxt = row + delta
@@ -2470,10 +2523,14 @@ class PlayerWindow(QMainWindow):
     def exit_fullscreen(self) -> None:
         if self._is_fullscreen:
             self._is_fullscreen = False
+            was_maximized = self._fs_maximized
             self._fs_rect = None
             self._fs_timer.stop()
             self._show_fs_controls()
-            self.showNormal()
+            if was_maximized:
+                self.showMaximized()
+            else:
+                self.showNormal()
             self.menuBar().show()
             if self._dock_visible_before_fs:
                 self.pl_dock.show()
@@ -2677,7 +2734,9 @@ class PlayerWindow(QMainWindow):
         if self.ab_active():
             try:
                 self.player.setPosition(self._ab_a)
-                self.player.play()
+                # 一時停止中に終端へ達した場合は位置だけ戻し、勝手に再生しない。
+                if self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
+                    self.player.play()
             except Exception:
                 pass
             self.seek.setValue(self._ab_a)
@@ -2693,6 +2752,7 @@ class PlayerWindow(QMainWindow):
     def on_error(self) -> None:
         err = self.player.error()
         if err == QMediaPlayer.Error.NoError:
+            self._suppress_error_box = False
             return
         msg = self.player.errorString() or "不明な再生エラー"
         # InvalidMedia と重複表示しない
@@ -2715,8 +2775,18 @@ def _run_selftest(argv: list[str]) -> int:
     out_path = None
     try:
         i = argv.index("--selftest")
-        if i + 1 < len(argv):
-            video = argv[i + 1]
+        skip_next = False
+        for token in argv[i + 1:]:
+            if skip_next:
+                skip_next = False
+                continue
+            if token == "--selftest-out":
+                skip_next = True
+                continue
+            if token.startswith("--"):
+                continue
+            video = token
+            break
     except ValueError:
         pass
     if "--selftest-out" in argv:

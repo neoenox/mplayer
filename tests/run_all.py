@@ -59,6 +59,7 @@ STAGES = [
     ("p34_shuffle_repeat", "tests/test_p34_shuffle_repeat.py", 180),
     ("p35_window_state", "tests/test_p35_window_state.py", 180),
     ("p36_recent_files", "tests/test_p36_recent_files.py", 180),
+    ("p37_subtitle_delay_files", "tests/test_p37_subtitle_delay_files.py", 180),
 ]
 
 
@@ -126,12 +127,17 @@ def main():
         if os.path.exists(args.python):
             VENV_PY = args.python
         else:
-            print(f"warn: --python not found ({args.python}); using {sys.executable}", flush=True)
+            VENV_PY = sys.executable
 
     os.makedirs(LOGDIR, exist_ok=True)
     total_p = total_f = total_s = 0
     rows = []
     wanted = set(args.stages)
+    valid = {n for n, _, _ in STAGES} | {r for _, r, _ in STAGES}
+    unknown = sorted(wanted - valid)
+    if unknown:
+        print(f"error: unknown stage(s): {', '.join(unknown)}", flush=True)
+        return 2
     for name, rel, timeout in STAGES:
         if wanted and name not in wanted and rel not in wanted:
             continue
@@ -171,7 +177,7 @@ def main():
         total_p += p
         total_f += fl
         total_s += sk
-        ok = status == "EXIT" and code == 0 and fl == 0
+        ok = status == "EXIT" and code == 0 and fl == 0 and p > 0
         rows.append((name, "PASS" if ok else ("FAIL" if fl else status), p, fl, sk))
         print(f"\r{name}: {rows[-1][1]} (pass={p} fail={fl} skip={sk})", flush=True)
 
@@ -187,7 +193,7 @@ def main():
         print(f"  {name}: {res} ({p}/{p + fl + sk})", flush=True)
     print(f"TOTAL: {total_p} passed, {total_f} failed, {total_s} skipped"
           f"  (logs: test_logs/)", flush=True)
-    return 1 if total_f or any(r[1] not in ("PASS",) for r in rows) else 0
+    return 1 if not rows or total_f or any(r[1] not in ("PASS",) for r in rows) else 0
 
 
 if __name__ == "__main__":
