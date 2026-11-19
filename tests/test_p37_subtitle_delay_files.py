@@ -28,7 +28,7 @@ from PySide6.QtCore import QEventLoop, QTimer  # noqa: E402
 
 from main import (HELP_NOTES, SUB_DELAY_LIMIT_MS,  # noqa: E402
                   SUB_DELAY_MAX_ENTRIES, PlayerWindow, __version__,
-                  remember_sub_delay, sanitize_sub_delay_map)
+                  recent_key, remember_sub_delay, sanitize_sub_delay_map)
 
 SRC = os.path.join(BASE, "test_640x360.mp4")
 CLIP_A = os.path.join(TMP, "a.mp4")
@@ -74,24 +74,27 @@ def main():
 
     a = os.path.abspath(CLIP_A)
     b = os.path.abspath(CLIP_B)
+    ka = recent_key(a)
+    kb = recent_key(b)
 
     # --- 保存値の検証 (純粋関数) ---
     check("dict でなければ空", sanitize_sub_delay_map(None) == {},
           str(sanitize_sub_delay_map(None)))
     check("リストは空", sanitize_sub_delay_map([1, 2]) == {})
-    check("正常な値はそのまま", sanitize_sub_delay_map({"/a": 500}) == {"/a": 500})
+    check("正常な値はそのまま", sanitize_sub_delay_map({"/a": 500}) == {recent_key("/a"): 500})
+    check("キーは正規化される", sanitize_sub_delay_map({a: 500}) == {ka: 500})
     check("キーが文字列でないものは捨てる", sanitize_sub_delay_map({1: 500}) == {})
     check("値が整数でないものは捨てる", sanitize_sub_delay_map({"/a": "500"}) == {})
     check("真偽値は捨てる", sanitize_sub_delay_map({"/a": True}) == {})
     check("大きすぎる値は上限に丸める",
-          sanitize_sub_delay_map({"/a": 99999}) == {"/a": SUB_DELAY_LIMIT_MS},
+          sanitize_sub_delay_map({"/a": 99999}) == {recent_key("/a"): SUB_DELAY_LIMIT_MS},
           str(sanitize_sub_delay_map({"/a": 99999})))
     check("負の大きすぎる値も丸める",
-          sanitize_sub_delay_map({"/a": -99999}) == {"/a": -SUB_DELAY_LIMIT_MS})
+          sanitize_sub_delay_map({"/a": -99999}) == {recent_key("/a"): -SUB_DELAY_LIMIT_MS})
     too_many = sanitize_sub_delay_map(
         {f"/{i}": 100 for i in range(SUB_DELAY_MAX_ENTRIES + 3)})
     check("上限を超えた件数は古い方から落とす",
-          len(too_many) == SUB_DELAY_MAX_ENTRIES and "/0" not in too_many,
+          len(too_many) == SUB_DELAY_MAX_ENTRIES and recent_key("/0") not in too_many,
           f"{len(too_many)} 件")
 
     check("遅延を覚える", remember_sub_delay({}, "/a", 300) == {"/a": 300})
@@ -127,7 +130,7 @@ def main():
     check("開いた直後は 0 秒", w.sub_delay_ms() == 0, str(w.sub_delay_ms()))
     check("字幕が読み込まれる", len(w._cues) == 2, str(len(w._cues)))
     check("A を +1.5 秒にできる", w.set_sub_delay(1500) == 1500, str(w.sub_delay_ms()))
-    check("A の遅延として覚える", w._sub_delays.get(a) == 1500, str(w._sub_delays))
+    check("A の遅延として覚える", w._sub_delays.get(ka) == 1500, str(w._sub_delays))
     check("遅らせると字幕の出方がずれる", w._cue_text_at(2500) == "いち",
           repr(w._cue_text_at(2500)))
 
@@ -135,33 +138,39 @@ def main():
     check("B は 0 秒から始まる", w.sub_delay_ms() == 0, str(w.sub_delay_ms()))
     check("メニューの表示も 0 秒", "0 秒" in w.sub_delay_info_act.text(),
           w.sub_delay_info_act.text())
-    check("A の記憶は残っている", w._sub_delays.get(a) == 1500, str(w._sub_delays))
+    check("A の記憶は残っている", w._sub_delays.get(ka) == 1500, str(w._sub_delays))
     check("ずれていないので出ない", w._cue_text_at(2500) == "", repr(w._cue_text_at(2500)))
     check("B を -0.2 秒にできる", w.set_sub_delay(-200) == -200, str(w.sub_delay_ms()))
-    check("B の遅延として覚える", w._sub_delays.get(b) == -200, str(w._sub_delays))
+    check("B の遅延として覚える", w._sub_delays.get(kb) == -200, str(w._sub_delays))
 
     check("A を開き直せる", w.load(CLIP_A))
     check("A の遅延が戻る", w.sub_delay_ms() == 1500, str(w.sub_delay_ms()))
     check("メニューにも出る", "1.5" in w.sub_delay_info_act.text(),
           w.sub_delay_info_act.text())
-    check("B の記憶も残っている", w._sub_delays.get(b) == -200, str(w._sub_delays))
+    check("B の記憶も残っている", w._sub_delays.get(kb) == -200, str(w._sub_delays))
 
     check("B をもう一度開ける", w.load(CLIP_B))
     check("B の遅延も戻る", w.sub_delay_ms() == -200, str(w.sub_delay_ms()))
 
     # --- リセットで記憶も消える ---
     check("リセットできる", w.reset_sub_delay() is None and w.sub_delay_ms() == 0)
-    check("リセットで記憶が消える", b not in w._sub_delays, str(w._sub_delays))
+    check("リセットで記憶が消える", kb not in w._sub_delays, str(w._sub_delays))
     check("B を開き直す", w.load(CLIP_B))
     check("0 秒のまま (記憶していない)", w.sub_delay_ms() == 0, str(w.sub_delay_ms()))
-    check("A の記憶は無事", w._sub_delays.get(a) == 1500, str(w._sub_delays))
+    check("A の記憶は無事", w._sub_delays.get(ka) == 1500, str(w._sub_delays))
+
+    # --- パスの表記違いでも同じ動画として扱う ---
+    variant = os.path.join(TMP, "A.MP4")
+    check("大文字違いのパスでも開ける", w.load(variant) is True)
+    check("同じ遅延が復元される", w.sub_delay_ms() == 1500, str(w.sub_delay_ms()))
+    check("記憶は 1 件のまま", len(w._sub_delays) == 1, str(w._sub_delays))
 
     # --- 保存 ---
     w.load(CLIP_A)
     w.set_sub_delay(700)
     w._save_session()
     saved = read_session()
-    check("session.json に保存する", saved.get("subtitle_delay_files", {}).get(a) == 700,
+    check("session.json に保存する", saved.get("subtitle_delay_files", {}).get(ka) == 700,
           str(saved.get("subtitle_delay_files")))
     check("現在値も従来どおり保存する", saved.get("subtitle_delay_ms") == 700,
           str(saved.get("subtitle_delay_ms")))
@@ -182,7 +191,7 @@ def main():
     write_session({"subtitle_delay_files": {"x": "1", a: 400, "y": True}})
     w2 = new_window()
     w2.restore_session()
-    check("壊れた値は無視して戻す", w2._sub_delays == {a: 400}, str(w2._sub_delays))
+    check("壊れた値は無視して戻す", w2._sub_delays == {ka: 400}, str(w2._sub_delays))
     check("開いたときに適用する", w2.load(CLIP_A) is True and w2.sub_delay_ms() == 400,
           str(w2.sub_delay_ms()))
     w2.update_subtitle(2350)

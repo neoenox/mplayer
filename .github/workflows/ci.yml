@@ -51,6 +51,20 @@ jobs:
     needs: test
     steps:
       - uses: actions/checkout@v7
+      - name: Check tag matches __version__
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          $src = Get-Content main.py -Raw -Encoding UTF8
+          $m = [regex]::Match($src, '(?m)^__version__\s*=\s*"([^"]+)"')
+          if (-not $m.Success) { throw "__version__ not found in main.py" }
+          $expected = "v" + $m.Groups[1].Value
+          if ($env:TAG_NAME -ne $expected) {
+            throw ("Tag '{0}' does not match main.py __version__ ('{1}'). Bump __version__/CHANGELOG or retag." -f $env:TAG_NAME, $expected)
+          }
+          Write-Host ("tag {0} matches __version__ {1}" -f $env:TAG_NAME, $expected)
       - uses: actions/setup-python@v7
         with:
           python-version: "3.11"

@@ -95,6 +95,7 @@ def sanitize_sub_delay_map(value, limit=SUB_DELAY_MAX_ENTRIES) -> dict[str, int]
 
     - dict でない、キーが文字列でない、値が整数でない (真偽値を含む) ものは捨てる
     - 値は遅延の上限内に丸める
+    - キーは recent_key() で正規化し、パスの表記違いは同じファイルとしてまとめる
     - 上限を超えた分は古い方から落とす
     """
     out: dict[str, int] = {}
@@ -102,7 +103,7 @@ def sanitize_sub_delay_map(value, limit=SUB_DELAY_MAX_ENTRIES) -> dict[str, int]
         return out
     for path, ms in value.items():
         if isinstance(path, str) and isinstance(ms, int) and not isinstance(ms, bool):
-            out[path] = clamp_sub_delay(ms)
+            out[recent_key(path)] = clamp_sub_delay(ms)
     while len(out) > limit:
         out.pop(next(iter(out)))
     return out
@@ -1303,7 +1304,8 @@ class PlayerWindow(QMainWindow):
         self._recent = recent_add(self._recent, self._current_path)
         self._refresh_recent_menu()
         # 字幕の遅延はファイル単位 (前のファイルの値を引きずらない)
-        self.set_sub_delay(self._sub_delays.get(self._current_path, 0), notify=False)
+        self.set_sub_delay(self._sub_delays.get(recent_key(self._current_path), 0),
+                           notify=False)
         self._restore_pos = self._resume_pos_for(self._current_path)
         # 字幕をリセットし、同名 .srt があれば自動で読み込む
         self.clear_subtitles()
@@ -1784,8 +1786,8 @@ class PlayerWindow(QMainWindow):
         value = clamp_sub_delay(ms)
         # ファイル単位の遅延として覚える (0 に戻したら忘れる)。
         # 値が同じでも記憶を触る (上限到達時の古い方からの除外を正しくするため)。
-        self._sub_delays = remember_sub_delay(
-            self._sub_delays, self._current_path, value)
+        key = recent_key(self._current_path) if self._current_path else None
+        self._sub_delays = remember_sub_delay(self._sub_delays, key, value)
         if value == self._sub_delay_ms:
             if notify:
                 self._show_shot_message(f"字幕の遅延: {format_sub_delay(value)}")
