@@ -1,6 +1,10 @@
 # Changelog
 
-## [Unreleased]
+本プロジェクトの主な変更点を記録します。
+形式は [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に準拠し、
+バージョンは [Semantic Versioning](https://semver.org/lang/ja/) に従います。
+
+## [1.26.0] - 2026-11-20
 
 ### Added
 - 初回起動時に一度だけヒントを表示し、全アクション・ボタンにツールチップを追加しました
@@ -9,10 +13,6 @@
 ### Changed
 - インストーラーで動画ファイルの関連付けを登録できるようにしました。管理者権限でインストールし、
   Windows の「既定のアプリ」画面から 9 拡張子をまとめて既定に設定できます
-
-本プロジェクトの主な変更点を記録します。
-形式は [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に準拠し、
-バージョンは [Semantic Versioning](https://semver.org/lang/ja/) に従います。
 
 ## [1.25.0] - 2026-10-19
 
