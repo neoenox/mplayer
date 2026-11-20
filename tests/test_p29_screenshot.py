@@ -6,6 +6,7 @@
 - 別の動画を開くと保持フレームを破棄すること
 """
 import glob
+import json
 import os
 import shutil
 import sys
@@ -36,7 +37,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QFileDialog, QMenu
 
 import main as player_main
-from main import HELP_NOTES, SHORTCUTS, PlayerWindow
+from main import FIRST_HINT_TEXT, HELP_NOTES, SHORTCUTS, PlayerWindow
 
 SRC = os.path.join(BASE, "test_640x360.mp4")
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
@@ -77,6 +78,26 @@ def main():
           any("名前を付けて保存" in x for x in labels), str(labels))
     check("初期状態はメッセージ非表示", not w.shot_label.isVisible())
     check("初期状態はフレーム未保持", not w.has_frame())
+
+    # --- 初回ヒント (既存の通知が優先 / 表示したら既読) ---
+    w._clear_shot_message()
+    w._hint_seen = False
+    w._show_shot_message("既存の通知")
+    w.maybe_show_first_hint()
+    check("既存の通知が優先される", w.shot_label.text() == "既存の通知",
+          w.shot_label.text())
+    check("干渉した場合は未既読のまま", w._hint_seen is False)
+    w._clear_shot_message()
+    w.maybe_show_first_hint()
+    check("初回ヒントが出る", w.shot_label.text() == FIRST_HINT_TEXT,
+          w.shot_label.text())
+    check("表示したら既読になる", w._hint_seen is True)
+    w._save_session()
+    with open(SESSION, encoding="utf-8") as f:
+        saved = json.load(f)
+    check("既読がセッションに保存される", saved.get("hint_seen") is True,
+          str(saved.get("hint_seen")))
+    w._clear_shot_message()
 
     # --- 動画なし ---
     check("未ロードの既定保存先は無し", w.default_screenshot_path() is None)

@@ -6,8 +6,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from helpers import check, finish, make_app, patch_message_boxes
 
 import main as app_main
-from main import (HELP_NOTES, MOUSE_HELP, SHORTCUTS, HelpDialog, PlayerWindow,
-                  build_help_html)
+from main import (ACTION_KEYS, HELP_CATEGORIES, HELP_NOTES, MOUSE_HELP,
+                  SHORTCUTS, HelpDialog, PlayerWindow, build_help_html)
+from PySide6.QtGui import QAction
 
 
 def main():
@@ -30,9 +31,30 @@ def main():
         check(f"HTML に {k} の記載", k in html and v in html)
     for note in HELP_NOTES:
         check("HTML にヒント", note in html)
+    check("カテゴリが4つ", len(HELP_CATEGORIES) == 4, str(HELP_CATEGORIES))
+    indexes = [i for _, ids in HELP_CATEGORIES for i in ids]
+    check("全ヒントが1回ずつ分類", sorted(indexes) == list(range(len(HELP_NOTES))),
+          str(indexes))
+    for category, _ in HELP_CATEGORIES:
+        check(f"HTML にカテゴリ {category}", f"<h5>{category}</h5>" in html)
+    known_keys = {k for k, _ in SHORTCUTS}
+    known_keys |= {part.strip() for k, _ in SHORTCUTS for part in k.split(" / ")}
+    check("アクション識別子が全てキーを持つ",
+          set(ACTION_KEYS.values()) <= known_keys,
+          str(set(ACTION_KEYS.values()) - known_keys))
 
     make_app()
     w = PlayerWindow()
+    tips = {a.objectName(): a.toolTip()
+            for a in w.findChildren(QAction) if a.objectName()}
+    check("複数のアクションにツールチップ", len(tips) >= 20, str(len(tips)))
+    check("非表示アクション (Space) にもツールチップ", "Space" in tips.get("playpause", ""),
+          tips.get("playpause", ""))
+    check("テキスト付きアクションにキー付きツールチップ",
+          "Ctrl+S" in w.shot_act.toolTip() and "スクリーンショット" in w.shot_act.toolTip(),
+          w.shot_act.toolTip())
+    check("F1 アクションのツールチップ", "F1" in w.help_act.toolTip(),
+          w.help_act.toolTip())
     check("ヘルプメニューにアクション", w.help_act.text() == "ショートカット一覧")
     check("F1 が割当", w.help_act.shortcut().toString() == "F1",
           w.help_act.shortcut().toString())

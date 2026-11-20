@@ -623,6 +623,23 @@ SHORTCUTS = [
     ("F1", "このヘルプを表示"),
 ]
 
+# アクション識別子 -> 表示キー (説明は既存 SHORTCUTS を再利用)
+ACTION_KEYS = {
+    "open": "Ctrl+O", "shot": "Ctrl+S", "playpause": "Space",
+    "seek_back": "←", "seek_fwd": "→",
+    "prev_track": "Ctrl+←", "next_track": "Ctrl+→",
+    "volume_up": "↑", "volume_down": "↓",
+    "mute": "M", "subs": "S",
+    "ab_a": "A", "ab_b": "B", "ab_clear": "C",
+    "speed_up": "]", "speed_down": "[",
+    "frame_back": ",", "frame_fwd": ".",
+    "sub_delay_back": "Shift+,", "sub_delay_fwd": "Shift+.",
+    "shuffle": "Shift+S", "repeat": "Shift+R",
+    "fullscreen": "F / F11", "exit_fullscreen": "Esc", "help": "F1",
+}
+
+FIRST_HINT_TEXT = "F1 でショートカット一覧を開けます。操作はメニューとボタンからもできます。"
+
 MOUSE_HELP = [
     ("ダブルクリック", "全画面切替"),
     ("ホイール (映像上)", f"音量を {VOLUME_STEP} ずつ上下"),
@@ -650,6 +667,14 @@ HELP_NOTES = [
     "動画と同じフォルダに同名の .srt があれば、自動で読み込みます。",
 ]
 
+# HELP_NOTES のインデックスをカテゴリごとにまとめる (項目文は変更しない)。
+HELP_CATEGORIES = [
+    ("ファイル", (0, 9, 11, 15)),
+    ("再生", (6, 7, 10, 12)),
+    ("字幕", (3, 4, 5, 13, 14, 17)),
+    ("表示・設定", (1, 2, 8, 16)),
+]
+
 
 def build_help_html() -> str:
     """ヘルプダイアログの HTML を生成する。"""
@@ -661,7 +686,12 @@ def build_help_html() -> str:
         f'<tr><td style="padding:2px 12px 2px 0;"><b>{k}</b></td>'
         f'<td style="padding:2px 0;">{v}</td></tr>'
         for k, v in MOUSE_HELP)
-    notes = "".join(f"<li>{n}</li>" for n in HELP_NOTES)
+    notes = "".join(
+        f"<h5>{category}</h5><ul>"
+        + "".join(f"<li>{HELP_NOTES[i]}</li>" for i in indexes)
+        + "</ul>"
+        for category, indexes in HELP_CATEGORIES
+    )
     return (
         f"<h3>{APP_NAME} v{__version__}</h3>"
         "<h4>キーボードショートカット</h4>"
@@ -950,6 +980,7 @@ class PlayerWindow(QMainWindow):
         # --- メニュー / ショートカット ---
         file_menu = self.menuBar().addMenu("ファイル")
         open_act = QAction("開く...", self)
+        open_act.setObjectName("open")
         open_act.setShortcut(QKeySequence.StandardKey.Open)
         open_act.triggered.connect(self.open_file_dialog)
         file_menu.addAction(open_act)
@@ -974,6 +1005,7 @@ class PlayerWindow(QMainWindow):
         # メニューとウィンドウ全体の両方に登録し、全画面 (メニューバー非表示) でも
         # Ctrl+S が効くようにする (A-B リピートと同じ作法)。
         self.shot_act = QAction("スクリーンショットを保存", self)
+        self.shot_act.setObjectName("shot")
         self.shot_act.setShortcut(QKeySequence("Ctrl+S"))
         self.shot_act.triggered.connect(lambda: self.screenshot())
         file_menu.addAction(self.shot_act)
@@ -989,73 +1021,87 @@ class PlayerWindow(QMainWindow):
         file_menu.addAction(self.props_act)
 
         self.fs_act = QAction("全画面切替", self)
+        self.fs_act.setObjectName("fullscreen")
         self.fs_act.setShortcut(Qt.Key.Key_F11)
         self.fs_act.triggered.connect(self.toggle_fullscreen)
         self.addAction(self.fs_act)
 
         esc_act = QAction(self)
+        esc_act.setObjectName("exit_fullscreen")
         esc_act.setShortcut(Qt.Key.Key_Escape)
         esc_act.triggered.connect(self.exit_fullscreen)
         self.addAction(esc_act)
 
         # Space: 再生/一時停止。ボタン類はNoFocusのため二重発火しない。
         space_act = QAction(self)
+        space_act.setObjectName("playpause")
         space_act.setShortcut(Qt.Key.Key_Space)
         space_act.triggered.connect(self.toggle_play)
         self.addAction(space_act)
 
         left_act = QAction(self)
+        left_act.setObjectName("seek_back")
         left_act.setShortcut(Qt.Key.Key_Left)
         left_act.triggered.connect(lambda: self.seek_by(-5000))
         self.addAction(left_act)
 
         right_act = QAction(self)
+        right_act.setObjectName("seek_fwd")
         right_act.setShortcut(Qt.Key.Key_Right)
         right_act.triggered.connect(lambda: self.seek_by(5000))
         self.addAction(right_act)
 
         f_act = QAction(self)
+        f_act.setObjectName("fullscreen")
         f_act.setShortcut(Qt.Key.Key_F)
         f_act.triggered.connect(self.toggle_fullscreen)
         self.addAction(f_act)
 
         m_act = QAction(self)
+        m_act.setObjectName("mute")
         m_act.setShortcut(Qt.Key.Key_M)
         m_act.triggered.connect(lambda: self.mute_btn.click())
         self.addAction(m_act)
 
         up_act = QAction(self)
+        up_act.setObjectName("volume_up")
         up_act.setShortcut(Qt.Key.Key_Up)
         up_act.triggered.connect(lambda: self.vol.setValue(min(100, self.vol.value() + 10)))
         self.addAction(up_act)
 
         down_act = QAction(self)
+        down_act.setObjectName("volume_down")
         down_act.setShortcut(Qt.Key.Key_Down)
         down_act.triggered.connect(lambda: self.vol.setValue(max(0, self.vol.value() - 10)))
         self.addAction(down_act)
 
         s_act = QAction(self)
+        s_act.setObjectName("subs")
         s_act.setShortcut(Qt.Key.Key_S)
         s_act.triggered.connect(lambda: self.subs_btn.click())
         self.addAction(s_act)
 
         next_act = QAction(self)
+        next_act.setObjectName("next_track")
         next_act.setShortcut(QKeySequence("Ctrl+Right"))
         next_act.triggered.connect(self.play_next)
         self.addAction(next_act)
 
         prev_act = QAction(self)
+        prev_act.setObjectName("prev_track")
         prev_act.setShortcut(QKeySequence("Ctrl+Left"))
         prev_act.triggered.connect(self.play_prev)
         self.addAction(prev_act)
 
         # 再生速度: ] で上げる / [ で下げる (端では据え置き)。
         self.speed_up_act = QAction(self)
+        self.speed_up_act.setObjectName("speed_up")
         self.speed_up_act.setShortcut(QKeySequence(Qt.Key.Key_BracketRight))
         self.speed_up_act.triggered.connect(self.speed_up)
         self.addAction(self.speed_up_act)
 
         self.speed_down_act = QAction(self)
+        self.speed_down_act.setObjectName("speed_down")
         self.speed_down_act.setShortcut(QKeySequence(Qt.Key.Key_BracketLeft))
         self.speed_down_act.triggered.connect(self.speed_down)
         self.addAction(self.speed_down_act)
@@ -1064,18 +1110,21 @@ class PlayerWindow(QMainWindow):
         # ウィンドウ全体のショートカットとしても登録する。
         play_menu = self.menuBar().addMenu("再生")
         self.ab_a_act = QAction("A-B: A 点を設定", self)
+        self.ab_a_act.setObjectName("ab_a")
         self.ab_a_act.setShortcut(Qt.Key.Key_A)
         self.ab_a_act.triggered.connect(self.set_ab_a)
         play_menu.addAction(self.ab_a_act)
         self.addAction(self.ab_a_act)
 
         self.ab_b_act = QAction("A-B: B 点を設定してループ", self)
+        self.ab_b_act.setObjectName("ab_b")
         self.ab_b_act.setShortcut(Qt.Key.Key_B)
         self.ab_b_act.triggered.connect(self.set_ab_b)
         play_menu.addAction(self.ab_b_act)
         self.addAction(self.ab_b_act)
 
         self.ab_clear_act = QAction("A-B リピートを解除", self)
+        self.ab_clear_act.setObjectName("ab_clear")
         self.ab_clear_act.setShortcut(Qt.Key.Key_C)
         self.ab_clear_act.triggered.connect(self.clear_ab)
         play_menu.addAction(self.ab_clear_act)
@@ -1085,12 +1134,14 @@ class PlayerWindow(QMainWindow):
         # メニューに載せつつ、全画面でも効くようウィンドウ全体にも登録)。
         play_menu.addSeparator()
         self.step_back_act = QAction("1 フレーム戻る", self)
+        self.step_back_act.setObjectName("frame_back")
         self.step_back_act.setShortcut(QKeySequence(Qt.Key.Key_Comma))
         self.step_back_act.triggered.connect(self.step_frame_back)
         play_menu.addAction(self.step_back_act)
         self.addAction(self.step_back_act)
 
         self.step_fwd_act = QAction("1 フレーム進む", self)
+        self.step_fwd_act.setObjectName("frame_fwd")
         self.step_fwd_act.setShortcut(QKeySequence(Qt.Key.Key_Period))
         self.step_fwd_act.triggered.connect(self.step_frame_forward)
         play_menu.addAction(self.step_fwd_act)
@@ -1100,6 +1151,7 @@ class PlayerWindow(QMainWindow):
         # 全画面 (メニューバー非表示) でも効くようウィンドウ全体にも登録する。
         play_menu.addSeparator()
         self.shuffle_act = QAction("シャッフル再生", self)
+        self.shuffle_act.setObjectName("shuffle")
         self.shuffle_act.setCheckable(True)
         self.shuffle_act.setShortcut(
             QKeySequence(Qt.Key.Key_S | Qt.KeyboardModifier.ShiftModifier))
@@ -1108,6 +1160,7 @@ class PlayerWindow(QMainWindow):
         self.addAction(self.shuffle_act)
 
         self.repeat_act = QAction("リピート切替", self)
+        self.repeat_act.setObjectName("repeat")
         self.repeat_act.setShortcut(
             QKeySequence(Qt.Key.Key_R | Qt.KeyboardModifier.ShiftModifier))
         self.repeat_act.triggered.connect(self.cycle_repeat)
@@ -1197,6 +1250,7 @@ class PlayerWindow(QMainWindow):
         sub_menu.addSeparator()
         self._sub_delay_menu = sub_menu.addMenu(f"遅延 (±{SUB_DELAY_LIMIT_MS / 1000:.0f} 秒)")
         self.sub_delay_act = QAction("字幕を 0.1 秒遅らせる", self)
+        self.sub_delay_act.setObjectName("sub_delay_fwd")
         self.sub_delay_act.setShortcut(
             QKeySequence(Qt.Key.Key_Period | Qt.KeyboardModifier.ShiftModifier))
         self.sub_delay_act.triggered.connect(self.delay_subtitles)
@@ -1204,6 +1258,7 @@ class PlayerWindow(QMainWindow):
         self.addAction(self.sub_delay_act)
 
         self.sub_advance_act = QAction("字幕を 0.1 秒早める", self)
+        self.sub_advance_act.setObjectName("sub_delay_back")
         self.sub_advance_act.setShortcut(
             QKeySequence(Qt.Key.Key_Comma | Qt.KeyboardModifier.ShiftModifier))
         self.sub_advance_act.triggered.connect(self.advance_subtitles)
@@ -1223,6 +1278,7 @@ class PlayerWindow(QMainWindow):
 
         help_menu = self.menuBar().addMenu("ヘルプ")
         self.help_act = QAction("ショートカット一覧", self)
+        self.help_act.setObjectName("help")
         self.help_act.setShortcut(Qt.Key.Key_F1)
         self.help_act.triggered.connect(self.show_shortcuts)
         help_menu.addAction(self.help_act)
@@ -1230,6 +1286,7 @@ class PlayerWindow(QMainWindow):
         about_act = QAction("バージョン情報", self)
         about_act.triggered.connect(self.show_about)
         help_menu.addAction(about_act)
+        self._install_action_tooltips()
         self._help_dialog: HelpDialog | None = None
         self._is_fullscreen = False
         # 全画面に入る前のウィンドウ矩形と最大化状態 (全画面のまま終了しても
@@ -1245,6 +1302,8 @@ class PlayerWindow(QMainWindow):
         self._fs_timer.setSingleShot(True)
         self._fs_timer.timeout.connect(self._hide_fs_controls)
         self._suppress_error_box = False
+        # 初回ヒントの既読状態。restore_session() で上書きされる。
+        self._hint_seen = True
         # 遅延シークの世代管理。load()ごとに加算し、古いファイル向けの
         # 予約シークが新ファイルへ誤適用されるのを防ぐ (P5)。
         self._media_gen = 0
@@ -1445,6 +1504,7 @@ class PlayerWindow(QMainWindow):
             "window": self.window_state_for_save(),
             # 消えているファイルはここで掃除する (履歴が延び続けないように)
             "recent": recent_prune(self._recent),
+            "hint_seen": bool(self._hint_seen),
         }
         try:
             with open(SESSION_FILE, "w", encoding="utf-8") as f:
@@ -1505,6 +1565,7 @@ class PlayerWindow(QMainWindow):
             self.set_repeat(repeat, notify=False)
         self.set_subtitle_color(s.get("subtitle_color"))
         self.set_subtitle_font(s.get("subtitle_font"))
+        self._hint_seen = s.get("hint_seen") is True
         delays = s.get("subtitle_delay_files")
         if isinstance(delays, dict):
             self._sub_delays = sanitize_sub_delay_map(delays)
@@ -2380,6 +2441,31 @@ class PlayerWindow(QMainWindow):
             path += ".png"
         self.screenshot(path)
 
+    def _install_action_tooltips(self) -> None:
+        """SHORTCUTS とアクション text からツールチップを生成する。"""
+        def description_for(key: str) -> str:
+            for label, desc in SHORTCUTS:
+                if key == label or key in [part.strip() for part in label.split(" / ")]:
+                    return desc
+            return ""
+
+        for act in self.findChildren(QAction):
+            if act.isSeparator():
+                continue
+            key = ACTION_KEYS.get(act.objectName())
+            if key:
+                # text のある QAction は toolTip() が text を返すため、
+                # 識別子付きアクションは既存値に関わらず上書きする。
+                desc = act.text() or description_for(key)
+                act.setToolTip(f"{desc} ({key})" if desc else key)
+
+    def maybe_show_first_hint(self) -> None:
+        """初回起動時に一度だけ、他に通知が無ければヒントを出す。"""
+        if self._hint_seen or self.shot_label.isVisible() or self.shot_label.text():
+            return
+        self._show_shot_message(FIRST_HINT_TEXT)
+        self._hint_seen = True
+
     def _show_shot_message(self, text: str) -> None:
         self.shot_label.setText(text)
         self.shot_label.setVisible(True)
@@ -2844,6 +2930,8 @@ def main(argv: list[str] | None = None) -> int:
     w = PlayerWindow()
     w.restore_session()
     w.show()
+    if not w._hint_seen:
+        QTimer.singleShot(300, w.maybe_show_first_hint)
     # 起動引数で動画指定があれば自動オープン (検証用)
     if len(args) > 1 and os.path.isfile(args[1]):
         w.load(args[1])
