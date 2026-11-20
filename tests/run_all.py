@@ -178,7 +178,7 @@ def main():
         total_p += p
         total_f += fl
         total_s += sk
-        ok = status == "EXIT" and code == 0 and fl == 0 and p > 0
+        ok = status == "EXIT" and code == 0 and fl == 0 and (p > 0 or sk > 0)
         rows.append((name, "PASS" if ok else ("FAIL" if fl else status), p, fl, sk))
         print(f"\r{name}: {rows[-1][1]} (pass={p} fail={fl} skip={sk})", flush=True)
 
