@@ -127,6 +127,7 @@ def main():
         if os.path.exists(args.python):
             VENV_PY = args.python
         else:
+            print(f"warn: --python not found ({args.python}); using {sys.executable}", flush=True)
             VENV_PY = sys.executable
 
     os.makedirs(LOGDIR, exist_ok=True)

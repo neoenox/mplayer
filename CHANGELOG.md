@@ -12,6 +12,8 @@
   次回その動画を開くと、前回合わせた値が自動で復元されます（`session.json` の
   `"subtitle_delay_files"` に パス → ms で保存。上限 100 件）
 - 遅延を 0 に戻す（リセット）と、その動画の記憶も消えます
+- 旧形式の共通遅延 (`subtitle_delay_ms`) は移行されません。動画を最初に開いた
+  時点で、その動画の保存値 (未設定なら 0) に上書きされます
 - テスト `tests/test_p37_subtitle_delay_files.py`
 
 ### Fixed

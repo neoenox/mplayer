@@ -209,6 +209,19 @@ def main():
     check("ファイルを開くと 0 秒から", w3.load(CLIP_B) is True and w3.sub_delay_ms() == 0,
           str(w3.sub_delay_ms()))
 
+    # --- 旧形式の値は動画オープン中には適用せず、記憶も残さない ---
+    w4 = new_window()
+    check("オープン中でなければ現在値は 0", w4.sub_delay_ms() == 0,
+          str(w4.sub_delay_ms()))
+    check("動画を開ける", w4.load(CLIP_B) is True)
+    w4._apply_session({"subtitle_delay_ms": 900})
+    check("オープン中は旧値を適用しない", w4.sub_delay_ms() == 0,
+          str(w4.sub_delay_ms()))
+    check("オープン中でも記憶に残さない", w4._sub_delays == {},
+          str(w4._sub_delays))
+    check("開き直しても 0 秒", w4.load(CLIP_A) is True and w4.sub_delay_ms() == 0,
+          str(w4.sub_delay_ms()))
+
     # --- ドキュメント ---
     with open(os.path.join(BASE, "README.md"), encoding="utf-8") as f:
         readme = f.read()
@@ -223,7 +236,7 @@ def main():
           any("字幕の遅延は動画ごと" in n for n in HELP_NOTES),
           str([n for n in HELP_NOTES if "遅延" in n]))
 
-    for win in (w, w2, w3):
+    for win in (w, w2, w3, w4):
         win.close()
     pump(100)
     shutil.rmtree(TMP, ignore_errors=True)

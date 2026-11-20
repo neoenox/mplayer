@@ -1509,7 +1509,11 @@ class PlayerWindow(QMainWindow):
         if isinstance(delays, dict):
             self._sub_delays = sanitize_sub_delay_map(delays)
         delay = s.get("subtitle_delay_ms")
-        if isinstance(delay, int) and not isinstance(delay, bool):
+        # 旧形式の共通遅延は起動時 (動画を開く前) だけ反映する。
+        # オープン中に適用すると per-file マップへ記録され、
+        # 「最初に開いた動画で旧値は破棄される」という仕様と矛盾する。
+        if (not self._current_path and isinstance(delay, int)
+                and not isinstance(delay, bool)):
             # 復元時はメッセージを出さない (起動直後の操作系を汚さない)
             self.set_sub_delay(delay, notify=False)
         # 最近使ったファイル (消えているファイルはここで除く)
