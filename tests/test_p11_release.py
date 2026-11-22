@@ -28,7 +28,7 @@ def main():
           os.path.basename(app_main.STATE_DIR) == "mplayer")
     check("updater disabled in tests", updater.enabled() is False)
     check("version comparison", updater.version_tuple("v1.27.0") == (1, 27, 0)
-          and updater.is_newer("v1.29.0", app_main.__version__))
+          and updater.is_newer("v1.30.0", app_main.__version__))
     check("portable asset detection", updater.find_portable_asset({"assets": [
         {"name": "mplayer-setup-1.28.0.exe", "browser_download_url": "https://x/setup.exe"},
         {"name": "mplayer-windows-v1.28.0.zip", "browser_download_url": "https://x/app.zip"},
