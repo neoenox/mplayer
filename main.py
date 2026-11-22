@@ -34,7 +34,13 @@ from PySide6.QtGui import (
     QTextLayout,
     QTextOption,
 )
-from PySide6.QtMultimedia import QAudioOutput, QMediaMetaData, QMediaPlayer
+from PySide6.QtMultimedia import (
+    QAudioDevice,
+    QAudioOutput,
+    QMediaDevices,
+    QMediaMetaData,
+    QMediaPlayer,
+)
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -88,6 +94,13 @@ def format_sub_delay(ms: int) -> str:
 def clamp_sub_delay(ms: int) -> int:
     """字幕遅延を上限内 (±SUB_DELAY_LIMIT_MS) に丸める。"""
     return max(-SUB_DELAY_LIMIT_MS, min(SUB_DELAY_LIMIT_MS, int(ms)))
+
+
+def audio_device_key(device: QAudioDevice) -> str:
+    """音声出力先の ID を session.json 用の文字列にする (既定は '')。"""
+    if device.isNull():
+        return ""
+    return bytes(device.id()).hex()
 
 
 def sanitize_sub_delay_map(value, limit=SUB_DELAY_MAX_ENTRIES) -> dict[str, int]:
@@ -161,7 +174,7 @@ def collect_video_files(path: str, recursive: bool = True,
     return out
 
 APP_NAME = "シンプル動画プレイヤー"
-__version__ = "1.26.0"
+__version__ = "1.27.0"
 
 
 def _resource_path(rel: str) -> str:
@@ -665,12 +678,13 @@ HELP_NOTES = [
     "「ファイル」→「プロパティ...」で解像度・フレームレート・ビットレートを確認できます。",
     "終了時に音量・速度・プレイリスト・字幕設定 (表示 ON/OFF 含む) を保存し、次回起動時に復元します。",
     "動画と同じフォルダに同名の .srt があれば、自動で読み込みます。",
+    "音が出ないときは「再生」→「音声出力先」で出力先を切り替えてください (既定は OS の既定デバイスに追従します)。",
 ]
 
 # HELP_NOTES のインデックスをカテゴリごとにまとめる (項目文は変更しない)。
 HELP_CATEGORIES = [
     ("ファイル", (0, 9, 11, 15)),
-    ("再生", (6, 7, 10, 12)),
+    ("再生", (6, 7, 10, 12, 18)),
     ("字幕", (3, 4, 5, 13, 14, 17)),
     ("表示・設定", (1, 2, 8, 16)),
 ]
@@ -740,6 +754,15 @@ class PlayerWindow(QMainWindow):
         self.player = QMediaPlayer(self)
         self.audio = QAudioOutput(self)
         self.player.setAudioOutput(self.audio)
+        # 音声出力先。既定 ('') は OS の既定デバイスに追従し、
+        # 「再生」→「音声出力先」から特定のデバイスに固定できる。
+        self._audio_device_key = ""
+        self._audio_devices: dict[str, QAudioDevice] = {}
+        self._audio_device_menu: QMenu | None = None
+        self._audio_device_group = QActionGroup(self)
+        self._audio_device_group.setExclusive(True)
+        self._media_devices = QMediaDevices(self)
+        self._media_devices.audioOutputsChanged.connect(self._on_audio_outputs_changed)
         self.video = QVideoWidget(self)
         # アスペクト比を保ったままウィンドウに追従
         self.video.setAspectRatioMode(Qt.AspectRatioMode.KeepAspectRatio)
@@ -1109,6 +1132,10 @@ class PlayerWindow(QMainWindow):
         # A-B リピート (区間リピート)。メニューに載せつつ、全画面でも効くよう
         # ウィンドウ全体のショートカットとしても登録する。
         play_menu = self.menuBar().addMenu("再生")
+        play_menu.addSeparator()
+        self._audio_device_menu = play_menu.addMenu("音声出力先")
+        self._refresh_audio_device_menu()
+        play_menu.addSeparator()
         self.ab_a_act = QAction("A-B: A 点を設定", self)
         self.ab_a_act.setObjectName("ab_a")
         self.ab_a_act.setShortcut(Qt.Key.Key_A)
@@ -1486,6 +1513,7 @@ class PlayerWindow(QMainWindow):
         data = {
             "volume": self.vol.value(),
             "muted": self.mute_btn.isChecked(),
+            "audio_device": self._audio_device_key,
             "rate": self._rates[self._rate_idx],
             "subtitle_size": self._sub_size,
             "subtitle_pos": self._sub_pos,
@@ -1522,6 +1550,9 @@ class PlayerWindow(QMainWindow):
         if isinstance(muted, bool):
             self.mute_btn.setChecked(muted)
             self.audio.setMuted(muted)
+        device_key = s.get("audio_device")
+        if isinstance(device_key, str):
+            self.set_audio_device(device_key)
         rate = s.get("rate")
         if rate in self._rates:
             self._rate_idx = self._rates.index(rate)
@@ -2569,6 +2600,66 @@ class PlayerWindow(QMainWindow):
         except Exception:
             pass
         self.speed_btn.setText(f"速度 {rate}x")
+
+    # ---------- 音声出力先 ----------
+    def _refresh_audio_device_menu(self) -> None:
+        menu = self._audio_device_menu
+        if menu is None:
+            return
+        for act in list(self._audio_device_group.actions()):
+            self._audio_device_group.removeAction(act)
+        menu.clear()
+        self._audio_devices = {
+            key: device
+            for device in QMediaDevices.audioOutputs()
+            if not device.isNull() and (key := audio_device_key(device))
+        }
+        # OS によって列挙順が違うため、説明順に並べる。
+        devices = sorted(
+            self._audio_devices.items(), key=lambda item: item[1].description())
+        current = "システム既定"
+        for key, device in devices:
+            if key == self._audio_device_key:
+                current = device.description()
+                break
+        menu.setTitle(f"音声出力先: {current}")
+        choices = [("", "システム既定")]
+        choices += [(key, device.description()) for key, device in devices]
+        for key, label in choices:
+            act = QAction(label, self)
+            act.setCheckable(True)
+            act.setChecked(key == self._audio_device_key)
+            act.setData(key)
+            act.triggered.connect(
+                lambda _checked=False, k=key: self.set_audio_device(k))
+            self._audio_device_group.addAction(act)
+            menu.addAction(act)
+
+    def _on_audio_outputs_changed(self) -> None:
+        # 選択中のデバイスが抜けたら既定へ戻す (消えた出力先へ送り続けない)。
+        if self._audio_device_key:
+            devices = {
+                audio_device_key(d) for d in QMediaDevices.audioOutputs()
+                if not d.isNull()
+            }
+            if self._audio_device_key not in devices:
+                self._audio_device_key = ""
+                self.audio.setDevice(QAudioDevice())
+        self._refresh_audio_device_menu()
+
+    def set_audio_device(self, key: str) -> None:
+        """出力先を切り替える。未知の ID はシステム既定にフォールバック。"""
+        if not isinstance(key, str):
+            key = ""
+        if key not in self._audio_devices:
+            key = ""
+        self._audio_device_key = key
+        device = self._audio_devices.get(key)
+        try:
+            self.audio.setDevice(device if device is not None else QAudioDevice())
+        except Exception:
+            pass
+        self._refresh_audio_device_menu()
 
     @Slot(int)
     def change_volume(self, value: int) -> None:
