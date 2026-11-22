@@ -4,6 +4,11 @@
 形式は [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に準拠し、
 バージョンは [Semantic Versioning](https://semver.org/lang/ja/) に従います。
 
+## [1.30.0] - 2026-11-23
+
+### Added
+- 更新の完了・失敗を次回起動時に画面上のバナーで知らせるようにしました
+
 ## [1.28.0] - 2026-11-22
 ## [1.29.0] - 2026-11-23
 

@@ -28,7 +28,7 @@ def main():
           os.path.basename(app_main.STATE_DIR) == "mplayer")
     check("updater disabled in tests", updater.enabled() is False)
     check("version comparison", updater.version_tuple("v1.27.0") == (1, 27, 0)
-          and updater.is_newer("v1.30.0", app_main.__version__))
+          and updater.is_newer("v1.31.0", app_main.__version__))
     check("portable asset detection", updater.find_portable_asset({"assets": [
         {"name": "mplayer-setup-1.28.0.exe", "browser_download_url": "https://x/setup.exe"},
         {"name": "mplayer-windows-v1.28.0.zip", "browser_download_url": "https://x/app.zip"},
@@ -91,7 +91,10 @@ def main():
         f.write("ok")
     short = subprocess.Popen([sys.executable, "-c", "pass"])
     short.wait()
-    updater.start_apply(apply_app, apply_stage, pid=short.pid, exe_name="mplayer.exe")
+    result_path = os.path.join(apply_base, "update_result.json")
+    updater.start_apply(apply_app, apply_stage, pid=short.pid, exe_name="mplayer.exe",
+                        marker_path=result_path, from_version="1.28.1",
+                        to_version="v1.29.0")
     marker = os.path.join(apply_app, "applied-marker.txt")
     applied = False
     for _ in range(40):
@@ -102,6 +105,21 @@ def main():
     check("updater applies staged package", applied)
     check("updater preserves resume.json",
           os.path.isfile(os.path.join(apply_app, "resume.json")))
+    result_data = None
+    for _ in range(40):
+        if os.path.isfile(result_path):
+            try:
+                with open(result_path, encoding="utf-8-sig") as f:
+                    result_data = json.load(f)
+                break
+            except Exception:
+                pass
+        time.sleep(0.25)
+    check("update result marker written", bool(result_data and result_data.get("ok")),
+          str(result_data))
+    check("update marker has versions",
+          bool(result_data and result_data.get("from") == "1.28.1"
+               and result_data.get("to") == "v1.29.0"), str(result_data))
     shutil.rmtree(apply_base, ignore_errors=True)
     legacy_dir = tempfile.mkdtemp()
     fresh_dir = tempfile.mkdtemp()
@@ -120,7 +138,22 @@ def main():
         app_main.LEGACY_STATE_DIR = old_legacy
     shutil.rmtree(legacy_dir, ignore_errors=True)
     shutil.rmtree(fresh_dir, ignore_errors=True)
-
+    state_tmp = tempfile.mkdtemp()
+    old_state_env = os.environ.get("MPLAYER_STATE_DIR")
+    os.environ["MPLAYER_STATE_DIR"] = state_tmp
+    try:
+        updater.record_update_result(False, "1.28.1", "v1.29.0", "boom")
+        failure = updater.consume_update_result()
+        check("failure marker round-trip",
+              bool(failure and failure.get("ok") is False
+                   and failure.get("reason") == "boom"), str(failure))
+        check("marker consumed once", updater.consume_update_result() is None)
+    finally:
+        if old_state_env is None:
+            os.environ.pop("MPLAYER_STATE_DIR", None)
+        else:
+            os.environ["MPLAYER_STATE_DIR"] = old_state_env
+    shutil.rmtree(state_tmp, ignore_errors=True)
     make_app()
     w = app_main.PlayerWindow()
     check("title has version", app_main.__version__ in w.windowTitle(),
@@ -133,6 +166,20 @@ def main():
     updater.clear_status()
     w.refresh_update_label()
     check("update indicator hides when cleared", w.update_label.isHidden())
+    w.show_update_result({"ok": True, "from": "1.28.1", "to": "v1.29.0"})
+    w.refresh_update_label()
+    check("completion banner shown",
+          not w.update_label.isHidden() and "更新完了" in w.update_label.text(),
+          w.update_label.text())
+    check("completion banner styled", "font-weight: bold" in w.update_label.styleSheet())
+    w.show_update_result({"ok": False, "reason": "boom"})
+    w.refresh_update_label()
+    check("failure banner shown", "更新に失敗" in w.update_label.text(),
+          w.update_label.text())
+    check("failure banner styled red", "c62828" in w.update_label.styleSheet(),
+          w.update_label.styleSheet())
+    updater.clear_status()
+    w.refresh_update_label()
     w.close()
 
     cl = os.path.join(BASE, "CHANGELOG.md")
