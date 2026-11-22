@@ -183,7 +183,6 @@ def collect_video_files(path: str, recursive: bool = True,
 
 APP_NAME = "シンプル動画プレイヤー"
 __version__ = "1.30.0"
-__version__ = "1.28.0"
 
 # ダーク基調の共通スタイル。字幕ラベルは個別にスタイルを上書きする。
 APP_STYLESHEET = """
@@ -262,8 +261,6 @@ QListWidget#playlist_view {
 }
 QListWidget#playlist_view::item { padding: 6px 8px; border-radius: 4px; }
 """
-__version__ = "1.28.1"
-__version__ = "1.29.0"
 
 
 def _resource_path(rel: str) -> str:
