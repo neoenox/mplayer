@@ -5,6 +5,9 @@
 バージョンは [Semantic Versioning](https://semver.org/lang/ja/) に従います。
 
 ## [Unreleased]
+### Added
+- 起動時に GitHub Releases を確認し、新しいポータブル版をサイレントに適用する自動更新を追加しました (書き込み可能なポータブル配置のみ / `MPLAYER_NO_AUTOUPDATE=1` で無効化)
+
 
 ### Fixed
 - インストーラの権限要件ドキュメントを実態に合わせ、関連付けが失敗する非管理者インストールの選択肢を無効化しました

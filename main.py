@@ -19,6 +19,7 @@ import re
 import sys
 import tempfile
 import time
+import updater
 
 from PySide6.QtCore import QEvent, QPointF, Qt, QTimer, QUrl, Slot
 from PySide6.QtGui import (
@@ -3099,6 +3100,11 @@ def main(argv: list[str] | None = None) -> int:
     w = PlayerWindow()
     w.restore_session()
     w.show()
+    if updater.enabled():
+        app_dir = os.path.dirname(sys.executable)
+        exe_name = os.path.basename(sys.executable)
+        app.aboutToQuit.connect(lambda: updater.finalize(app_dir, exe_name))
+        updater.start_background_check(app_dir, __version__)
     if not w._hint_seen:
         QTimer.singleShot(300, w.maybe_show_first_hint)
     # 起動引数で動画指定があれば自動オープン (検証用)
