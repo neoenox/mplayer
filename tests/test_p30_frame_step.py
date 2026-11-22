@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TMP = os.path.join(BASE, "tmp_p30")
 SESSION = os.path.join(TMP, "session.json")
-RESUME = os.path.join(BASE, "resume.json")
+RESUME = os.environ.get("MPLAYER_RESUME_FILE", os.path.join(BASE, "resume.json"))
 CLIP = os.path.join(TMP, "clip.mp4")
 
 shutil.rmtree(TMP, ignore_errors=True)
@@ -97,10 +97,13 @@ def main():
     check("未ロードでは移動しない", w.step_frame(1) is False)
     check("未ロードのプロパティ情報は空", w.media_info_lines() == [],
           str(w.media_info_lines()))
+    before_state = w.player.playbackState()
     QTest.keyClick(w, Qt.Key.Key_Period)
     QTest.keyClick(w, Qt.Key.Key_Comma)
     pump(60)
-    check("未ロードでキーを押しても落ちない", True)
+    check("未ロードでキーを押しても落ちない",
+          w.player.playbackState() == before_state and w.player.source().isEmpty(),
+          f"state={w.player.playbackState()} source={w.player.source().toString()}")
     dialog_calls.clear()
     w.show_media_info()
     check("未ロードのプロパティは案内を出す",

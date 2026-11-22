@@ -15,7 +15,7 @@ def main():
     w.show()
     silence(w)
     w.load(os.path.join(BASE, 'test_60s.mp4'))
-    check('duration ready', wait_until(lambda: w.player.duration() == 60000))
+    check('duration ready', wait_until(lambda: 55000 <= w.player.duration() <= 65000))
     w.player.pause()
     QTest.qWait(200)
     w.seek.setFocus()

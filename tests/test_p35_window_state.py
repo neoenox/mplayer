@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TMP = os.path.join(BASE, "tmp_p35")
 SESSION = os.path.join(TMP, "session.json")
-RESUME = os.path.join(BASE, "resume.json")
+RESUME = os.environ.get("MPLAYER_RESUME_FILE", os.path.join(BASE, "resume.json"))
 
 os.makedirs(TMP, exist_ok=True)
 os.environ["MPLAYER_SESSION_FILE"] = SESSION

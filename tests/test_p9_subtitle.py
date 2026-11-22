@@ -4,7 +4,7 @@ import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from helpers import check, finish, make_app, patch_message_boxes, silence, wait_until
+from helpers import check, finish, make_app, patch_message_boxes, silence, skip, wait_until
 
 from PySide6.QtMultimedia import QMediaPlayer
 from PySide6.QtTest import QTest
@@ -41,6 +41,11 @@ def unit_checks():
     check("parse skips malformed", all(c[2] != "Ignored" for c in cues))
     check("parse empty", parse_srt("") == [])
     check("parse no-timestamp", parse_srt("hello\nworld\n") == [])
+    compact = ("1\n00:00:01,000 --> 00:00:02,000\nA\n"
+               "2\n00:00:03,000 --> 00:00:04,000\nB\n")
+    check("parse compact srt without blank lines",
+          parse_srt(compact) == [(1000, 2000, "A"), (3000, 4000, "B")],
+          str(parse_srt(compact)))
 
 
 def grab(w):
@@ -116,7 +121,7 @@ def main():
         diff = bottom_band_diff(img_on, img_off)
         check("subtitle composited over video", diff > 50, f"diff={diff}")
     else:
-        check("subtitle composited over video", True, "(skipped: offscreen)")
+        skip("subtitle composited over video", "(offscreen: ピクセル比較不可)")
 
     # 破損・不正ファイル
     bad = os.path.join(tempfile.gettempdir(), "mplayer_p9_bad.srt")
