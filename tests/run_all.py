@@ -63,6 +63,7 @@ STAGES = [
     ("p37_subtitle_delay_files", "tests/test_p37_subtitle_delay_files.py", 180),
     ("p38_audio_device", "tests/test_p38_audio_device.py", 90),
     ("p39_ui_layout", "tests/test_p39_ui_layout.py", 90),
+    ("p38_atomic_json", "tests/test_p38_atomic_json.py", 60),
 ]
 
 
@@ -155,6 +156,7 @@ def main():
                    MPLAYER_SESSION_FILE=os.path.join(LOGDIR, f"{name}.session.json"),
                    MPLAYER_RESUME_FILE=os.path.join(LOGDIR, f"{name}.resume.json"),
                    PYTHONUTF8="1",
+                   MPLAYER_NO_AUTOUPDATE="1",
                    QT_LOGGING_RULES="*.debug=false;qt.multimedia.*.info=false")
         for key in ("MPLAYER_SESSION_FILE", "MPLAYER_RESUME_FILE"):
             try:

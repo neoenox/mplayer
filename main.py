@@ -13,12 +13,16 @@ from __future__ import annotations
 
 import bisect
 import json
+import logging
 import os
 import random
 import re
 import sys
 import tempfile
 import time
+import updater
+
+from json_persistence import atomic_write_json
 
 from PySide6.QtCore import QEvent, QPointF, Qt, QTimer, QUrl, Slot
 from PySide6.QtGui import (
@@ -257,6 +261,7 @@ QListWidget#playlist_view {
 }
 QListWidget#playlist_view::item { padding: 6px 8px; border-radius: 4px; }
 """
+__version__ = "1.28.1"
 
 
 def _resource_path(rel: str) -> str:
@@ -1632,9 +1637,11 @@ class PlayerWindow(QMainWindow):
         try:
             while len(self._resume) > RESUME_MAX_ENTRIES:
                 self._resume.pop(next(iter(self._resume)))
-            _write_json_atomic(RESUME_FILE, self._resume, ensure_ascii=False)
+            atomic_write_json(RESUME_FILE, self._resume, ensure_ascii=False)
         except Exception:
-            pass
+            logging.getLogger(__name__).exception(
+                "Failed to save resume state to %s", RESUME_FILE
+            )
 
     def _resume_pos_for(self, path: str | None) -> int | None:
         if not path:
@@ -1739,9 +1746,11 @@ class PlayerWindow(QMainWindow):
             "hint_seen": bool(self._hint_seen),
         }
         try:
-            _write_json_atomic(SESSION_FILE, data, ensure_ascii=False, indent=2)
+            atomic_write_json(SESSION_FILE, data, ensure_ascii=False, indent=2)
         except Exception:
-            pass
+            logging.getLogger(__name__).exception(
+                "Failed to save session state to %s", SESSION_FILE
+            )
 
     def _apply_session(self, s: dict) -> None:
         if not isinstance(s, dict):
@@ -3326,6 +3335,11 @@ def main(argv: list[str] | None = None) -> int:
     w = PlayerWindow()
     w.restore_session()
     w.show()
+    if updater.enabled():
+        app_dir = os.path.dirname(sys.executable)
+        exe_name = os.path.basename(sys.executable)
+        app.aboutToQuit.connect(lambda: updater.finalize(app_dir, exe_name))
+        updater.start_background_check(app_dir, __version__)
     if not w._hint_seen:
         QTimer.singleShot(300, w.maybe_show_first_hint)
     # 起動引数で動画指定があれば自動オープン (検証用)
