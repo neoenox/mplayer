@@ -4,6 +4,16 @@
 形式は [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に準拠し、
 バージョンは [Semantic Versioning](https://semver.org/lang/ja/) に従います。
 
+## [Unreleased]
+
+### Added
+- サイレント更新の進行状況を操作系の小さなラベルに表示するようにしました
+
+### Changed
+- インストーラーをユーザー領域 (`%LOCALAPPDATA%\Programs`) に変更し、関連付けを権限に応じたレジストリ (HKA) に登録するようにしました
+- `resume.json` / `session.json` を `%LOCALAPPDATA%\mplayer\` に移行し、旧配置からの読み込みにも対応しました
+- `build_installer.bat` のエラー表示内の括弧が原因で常に失敗終了していた問題を修正しました
+
 ## [1.28.1] - 2026-11-22
 
 ### Fixed
