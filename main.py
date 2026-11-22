@@ -57,12 +57,15 @@ from PySide6.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QFrame,
     QMainWindow,
     QMenu,
     QMessageBox,
     QPushButton,
     QSlider,
     QStyle,
+    QStyleOptionSlider,
+    QToolTip,
     QTextBrowser,
     QVBoxLayout,
     QWidget,
@@ -179,6 +182,86 @@ def collect_video_files(path: str, recursive: bool = True,
     return out
 
 APP_NAME = "シンプル動画プレイヤー"
+__version__ = "1.28.0"
+
+# ダーク基調の共通スタイル。字幕ラベルは個別にスタイルを上書きする。
+APP_STYLESHEET = """
+QMainWindow, QWidget#central_surface { background: #0d1119; }
+QWidget#control_bar {
+    background: #151a24;
+    border-top: 1px solid #2b3444;
+}
+QPushButton {
+    background: #232b39;
+    color: #e8edf6;
+    border: 1px solid #374154;
+    border-radius: 8px;
+    padding: 5px 10px;
+    min-height: 22px;
+}
+QPushButton:hover { background: #2d384b; border-color: #52637e; }
+QPushButton:pressed { background: #1a2130; }
+QPushButton:checked { background: #244a7c; border-color: #5b9bff; color: #ffffff; }
+QPushButton:disabled { background: #1a202b; color: #707b8f; border-color: #262e3c; }
+QPushButton#btn_play {
+    background: #3b82f6; border-color: #3b82f6; color: #ffffff;
+    font-weight: 700; min-width: 76px;
+}
+QPushButton#btn_play:hover { background: #5594ff; }
+QPushButton#btn_play:disabled { background: #25365a; color: #8b9ab8; border-color: #2b3d63; }
+QPushButton#btn_fullscreen { min-width: 70px; }
+QFrame#control_separator { color: #303a4b; background: #303a4b; }
+QSlider { background: transparent; }
+QSlider::groove:horizontal {
+    height: 8px; background: #2b3240; border-radius: 4px;
+}
+QSlider::sub-page:horizontal {
+    background: #3b82f6; border-radius: 4px; margin: -4px 0;
+}
+QSlider::add-page:horizontal {
+    background: #2b3240; border-radius: 4px; margin: -4px 0;
+}
+QSlider::handle:horizontal {
+    width: 16px; height: 16px; margin: -4px 0;
+    border-radius: 8px; background: #e8edf6; border: 1px solid #8e97a8;
+}
+QSlider::handle:horizontal:hover { background: #ffffff; border-color: #6ea8ff; }
+QSlider:disabled::sub-page:horizontal { background: #485064; }
+QLabel#time_label { color: #e8edf6; font-size: 14px; font-weight: 700; }
+QLabel#remaining_label { color: #9aa5b8; font-size: 12px; font-weight: 600; }
+QLabel#volume_label { color: #9aa5b8; font-size: 12px; }
+QLabel#ab_label, QLabel#shot_label {
+    color: #cfe0ff; background: #213451; border: 1px solid #35578a;
+    border-radius: 6px; padding: 3px 8px; font-size: 12px;
+}
+QLabel#empty_hint {
+    color: #9aa8c0; font-size: 15px;
+    padding: 26px 32px;
+    border: 1px dashed #38445a; border-radius: 14px;
+    background: rgba(16, 22, 32, 230);
+}
+QMenuBar { background: #151a24; color: #dbe2ee; padding: 2px 4px; }
+QMenuBar::item:selected { background: #244a7c; border-radius: 4px; }
+QMenu { background: #1b202a; color: #e6e9f0; border: 1px solid #374154; }
+QMenu::item { padding: 6px 24px; }
+QMenu::item:selected { background: #244a7c; }
+QMenu::separator { height: 1px; background: #2f3746; }
+QToolTip {
+    background: #202938; color: #e8edf6;
+    border: 1px solid #4a5a75; border-radius: 6px; padding: 4px 8px;
+}
+QDockWidget#playlist_dock { background: #151a24; }
+QDockWidget#playlist_dock::title { color: #dbe2ee; padding: 6px; }
+QListWidget#playlist_view {
+    background: #10151e; color: #dbe2ee;
+    border: 1px solid #2b3444; border-radius: 8px;
+    alternate-background-color: #151b26;
+    selection-background-color: #244a7c;
+    padding: 4px;
+}
+QListWidget#playlist_view::item { padding: 6px 8px; border-radius: 4px; }
+"""
+__version__ = "1.28.1"
 __version__ = "1.29.0"
 
 
@@ -811,6 +894,7 @@ class PlayerWindow(QMainWindow):
         if os.path.isfile(ICON_PATH):
             self.setWindowIcon(QIcon(ICON_PATH))
         self.resize(WINDOW_DEFAULT_W, WINDOW_DEFAULT_H)
+        self.setStyleSheet(APP_STYLESHEET)
         self.setAcceptDrops(True)
 
         # --- 再生エンジン ---
@@ -861,6 +945,30 @@ class PlayerWindow(QMainWindow):
         # 映像の下端に配置 (addStretch で下寄せ)。背景は字幕行の高さのみ。
         self._overlay = QVBoxLayout(self.video)
         self._rebuild_overlay()
+        # 未読込時は「何をすればよいか」を映像領域の中央に示す。
+        # 専用レイヤーを重ね、字幕やダブルクリックの操作を妨げないようにする。
+        self.empty_layer = QWidget(self.video)
+        self.empty_layer.setObjectName("empty_layer")
+        self.empty_layer.setAttribute(
+            Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        empty_lay = QVBoxLayout(self.empty_layer)
+        empty_lay.setContentsMargins(0, 0, 0, 0)
+        empty_lay.addStretch(1)
+        self.empty_hint = QLabel(
+            "<div style='text-align:center'>"
+            "<span style='font-size:19px;font-weight:600;color:#dce6f7'>"
+            "動画を開いて再生</span>"
+            "<br><span style='font-size:12px;color:#93a3bd'>"
+            "ファイルをドラッグ＆ドロップ · Ctrl+O でも開けます</span></div>",
+            self.empty_layer)
+        self.empty_hint.setObjectName("empty_hint")
+        self.empty_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.empty_hint.setAttribute(
+            Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        empty_lay.addWidget(self.empty_hint, 0, Qt.AlignmentFlag.AlignCenter)
+        empty_lay.addStretch(1)
+        self._update_empty_state()
+        self._layout_empty_hint()
 
         # --- UI ---
         # NOTE: 操作系ウィジェットはフォーカスを受け取らない (NoFocus)。
@@ -868,26 +976,41 @@ class PlayerWindow(QMainWindow):
         # キーボード操作は下の QAction ショートカットに一本化する。
         self.open_btn = QPushButton("開く")
         self.open_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.open_btn.setObjectName("btn_open")
+        self.open_btn.setToolTip("動画を開く (Ctrl+O)")
         self.open_btn.clicked.connect(self.open_file_dialog)
 
         self.play_btn = QPushButton()
         self.play_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.play_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay))
+        self.play_btn.setObjectName("btn_play")
+        self.play_btn.setToolTip("再生 / 一時停止 (Space)")
         self.play_btn.setText("再生")
         self.play_btn.setEnabled(False)
         self.play_btn.clicked.connect(self.toggle_play)
 
         self.stop_btn = QPushButton("停止")
         self.stop_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.stop_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaStop))
+        self.stop_btn.setObjectName("btn_stop")
+        self.stop_btn.setToolTip("停止して先頭に戻す")
         self.stop_btn.setEnabled(False)
         self.stop_btn.clicked.connect(self.stop)
 
         self.time_label = QLabel("00:00 / 00:00")
+        self.time_label.setObjectName("time_label")
         self.time_label.setMinimumWidth(140)
+        self.remaining_label = QLabel("--:--")
+        self.remaining_label.setObjectName("remaining_label")
+        self.remaining_label.setMinimumWidth(64)
+        self.remaining_label.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.remaining_label.setToolTip("残り時間")
 
         self.seek = QSlider(Qt.Orientation.Horizontal)
         self.seek.setRange(0, 0)
+        self.seek.setObjectName("seek_slider")
+        self.seek.setToolTip("シーク (ホバーで時刻を確認 / ←→ で 5秒)")
+        self.seek.setMouseTracking(True)
+        self.seek.installEventFilter(self)
         # NOTE: sliderMoved ではなく sliderReleased でシークする。
         # ドラッグ中1pxごとに setPosition を呼ぶと FFmpeg バックエンドの
         # シーク要求が殺到し、イベントループがデッドロックする場合がある。
@@ -904,6 +1027,7 @@ class PlayerWindow(QMainWindow):
 
         self.vol = QSlider(Qt.Orientation.Horizontal)
         self.vol.setRange(0, 100)
+        self.vol.setObjectName("volume_slider")
         self.vol.setValue(80)
         self.vol.setMaximumWidth(120)
         self.vol.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -911,21 +1035,30 @@ class PlayerWindow(QMainWindow):
 
         self.mute_btn = QPushButton("ミュート")
         self.mute_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.mute_btn.setObjectName("btn_mute")
+        self.mute_btn.toggled.connect(self._update_mute_label)
+        self._update_mute_label(False)
         self.mute_btn.setCheckable(True)
         self.mute_btn.clicked.connect(self.toggle_mute)
 
         self.speed_btn = QPushButton("速度 1.0x")
         self.speed_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.speed_btn.setObjectName("btn_speed")
+        self.speed_btn.setToolTip("再生速度を切り替える ( [ / ] )")
         self.speed_btn.clicked.connect(self.cycle_speed)
 
         self.subs_btn = QPushButton("字幕")
         self.subs_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.subs_btn.setObjectName("btn_subs")
+        self.subs_btn.setToolTip("字幕の表示切替 (S)")
         self.subs_btn.setCheckable(True)
         self.subs_btn.setEnabled(False)
         self.subs_btn.clicked.connect(self.toggle_subtitles)
 
         self.pl_btn = QPushButton("リスト")
         self.pl_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.pl_btn.setObjectName("btn_playlist")
+        self.pl_btn.setToolTip("プレイリストの表示切替")
         self.pl_btn.setCheckable(True)
         self.pl_btn.toggled.connect(self._toggle_playlist_dock)
 
@@ -947,19 +1080,40 @@ class PlayerWindow(QMainWindow):
 
         self.fs_btn = QPushButton("全画面")
         self.fs_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.fs_btn.setObjectName("btn_fullscreen")
+        self.fs_btn.setToolTip("全画面切替 (F11 / F / ダブルクリック)")
         self.fs_btn.clicked.connect(self.toggle_fullscreen)
 
+        # 上段: 時刻 - シーク - 残り時間。
         top_row = QHBoxLayout()
-        top_row.addWidget(self.open_btn)
-        top_row.addWidget(self.play_btn)
-        top_row.addWidget(self.stop_btn)
-        top_row.addWidget(self.seek, 1)
+        top_row.setSpacing(12)
         top_row.addWidget(self.time_label)
+        top_row.addWidget(self.seek, 1)
+        top_row.addWidget(self.remaining_label)
+
+        # 下段: 再生 / 音量 / 表示切り替え / 全画面の順にグループ化する。
+        def separator() -> QFrame:
+            line = QFrame()
+            line.setObjectName("control_separator")
+            line.setFrameShape(QFrame.Shape.VLine)
+            line.setFixedWidth(1)
+            line.setFixedHeight(26)
+            return line
+
+        volume_label = QLabel("音量")
+        volume_label.setObjectName("volume_label")
+        volume_label.setToolTip("音量 (↑/↓ で ±10、映像上ホイールでも調整)")
 
         bottom_row = QHBoxLayout()
-        bottom_row.addWidget(QLabel("音量"))
+        bottom_row.setSpacing(6)
+        bottom_row.addWidget(self.open_btn)
+        bottom_row.addWidget(self.play_btn)
+        bottom_row.addWidget(self.stop_btn)
+        bottom_row.addWidget(separator())
+        bottom_row.addWidget(volume_label)
         bottom_row.addWidget(self.vol)
         bottom_row.addWidget(self.mute_btn)
+        bottom_row.addWidget(separator())
         bottom_row.addWidget(self.speed_btn)
         bottom_row.addWidget(self.subs_btn)
         bottom_row.addWidget(self.pl_btn)
@@ -971,9 +1125,10 @@ class PlayerWindow(QMainWindow):
 
         # 操作系は1つのウィジェットにまとめる (全画面時に一括で隠すため)。
         self.controls = QWidget(self)
+        self.controls.setObjectName("control_bar")
         ctl_lay = QVBoxLayout(self.controls)
-        ctl_lay.setContentsMargins(0, 0, 0, 0)
-        ctl_lay.setSpacing(4)
+        ctl_lay.setContentsMargins(8, 9, 8, 9)
+        ctl_lay.setSpacing(8)
         ctl_lay.addLayout(top_row)
         ctl_lay.addLayout(bottom_row)
 
@@ -982,6 +1137,7 @@ class PlayerWindow(QMainWindow):
         layout.addWidget(self.controls)
 
         central = QWidget(self)
+        central.setObjectName("central_surface")
         central.setLayout(layout)
         self.setCentralWidget(central)
         self._central = central
@@ -993,6 +1149,9 @@ class PlayerWindow(QMainWindow):
 
         # --- プレイリスト (連続再生) ---
         self.playlist = QListWidget()
+        self.playlist.setObjectName("playlist_view")
+        self.playlist.setAlternatingRowColors(True)
+        self.playlist.setSpacing(2)
         self.playlist.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.playlist.itemDoubleClicked.connect(self._on_playlist_activated)
         # 並べ替え: 内部ドラッグ移動のみ許可 (ファイルのドロップは親ウィンドウが処理)。
@@ -1477,6 +1636,7 @@ class PlayerWindow(QMainWindow):
         self._last_image = None
         self._image_frame = None
         self.player.setSource(QUrl.fromLocalFile(path))
+        self._update_empty_state()
         self.play_btn.setEnabled(True)
         self.stop_btn.setEnabled(True)
         self.seek.setEnabled(True)
@@ -1737,6 +1897,7 @@ class PlayerWindow(QMainWindow):
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
+        self._layout_empty_hint()
         # 起動時の 1 回だけ、最大化とプレイリストの表示を復元する。
         if self._pending_maximized or self._pending_dock:
             maximized = self._pending_maximized
@@ -1759,6 +1920,19 @@ class PlayerWindow(QMainWindow):
             if os.path.isfile(cand):
                 return cand
         return None
+
+    def _update_empty_state(self) -> None:
+        """ソース未設定のときだけ案内を表示する。"""
+        self.empty_layer.setVisible(self.player.source().isEmpty())
+
+    def _layout_empty_hint(self) -> None:
+        """案内レイヤーを映像領域いっぱいに広げ、中央に配置する。"""
+        self.empty_layer.setGeometry(self.video.rect())
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        self._layout_empty_hint()
+        super().resizeEvent(event)
+
 
     # ---------- 字幕の表示設定 ----------
     def _rebuild_overlay(self) -> None:
@@ -2761,6 +2935,7 @@ class PlayerWindow(QMainWindow):
     @Slot(int)
     def change_volume(self, value: int) -> None:
         self.audio.setVolume(value / 100.0)
+        self.vol.setToolTip(f"音量 {value}% (↑/↓ で ±10)")
         if value > 0 and self.mute_btn.isChecked():
             self.mute_btn.setChecked(False)
             self.audio.setMuted(False)
@@ -2781,6 +2956,10 @@ class PlayerWindow(QMainWindow):
         muted = self.mute_btn.isChecked()
         self.audio.setMuted(muted)
 
+    def _update_mute_label(self, muted: bool) -> None:
+        self.mute_btn.setText("解除" if muted else "ミュート")
+        self.mute_btn.setToolTip(
+            "ミュートを解除 (M)" if muted else "ミュート (M)")
     @Slot()
     def toggle_fullscreen(self) -> None:
         if self._is_fullscreen:
@@ -2841,7 +3020,44 @@ class PlayerWindow(QMainWindow):
         self.note_activity()
         super().mouseMoveEvent(event)
 
+    def _seek_time_at(self, x: int) -> int:
+        """シークバーの x 座標に対応する時刻 (ms) を返す。"""
+        dur = self.player.duration()
+        if dur <= 0 or self.seek.maximum() <= 0 or not self.seek.isEnabled():
+            return 0
+        option = QStyleOptionSlider()
+        self.seek.initStyleOption(option)
+        style = self.seek.style()
+        handle = style.pixelMetric(
+            QStyle.PixelMetric.PM_SliderLength, option, self.seek)
+        # sliderValueFromPosition はグローブ左端からの座標を取る。
+        # つまみ幅の半分を差し引かないと両端の時刻がずれる。
+        space = max(1, self.seek.width() - handle)
+        value = QStyle.sliderValueFromPosition(
+            self.seek.minimum(), self.seek.maximum(),
+            int(x) - handle // 2, space, option.upsideDown)
+        return max(0, min(dur, value))
+
+    def _show_seek_preview(self, event) -> None:
+        value = self._seek_time_at(event.position().x())
+        if value <= 0 and self.seek.maximum() <= 0:
+            return
+        text = format_ms(value)
+        self.seek.setToolTip(text)
+        QToolTip.showText(
+            self.seek.mapToGlobal(event.position().toPoint()), text, self.seek)
+
     def eventFilter(self, obj, event) -> bool:  # noqa: N802
+        # 映像領域のリサイズに合わせて空状態の案内を再配置する。
+        if obj is self.video and event.type() == QEvent.Type.Resize:
+            self._layout_empty_hint()
+        # シークバー上では現在位置を動かさず、ホバー位置の時刻だけを示す。
+        if obj is self.seek:
+            if event.type() == QEvent.Type.MouseMove:
+                self._show_seek_preview(event)
+            elif event.type() == QEvent.Type.Leave:
+                QToolTip.hideText()
+                self.seek.setToolTip("シーク (ホバーで時刻を確認 / ←→ で 5秒)")
         # 子ウィジェット (映像領域など) 上のマウス移動も活動として扱う。
         if event.type() == QEvent.Type.MouseMove and self._is_fullscreen:
             self.note_activity()
@@ -2957,18 +3173,31 @@ class PlayerWindow(QMainWindow):
         return -1
 
     # ---------- 再生状態反映 ----------
+
+    def _sync_time_labels(self, pos: int, dur: int, ended: bool = False) -> None:
+        """経過 / 総時間と残り時間をまとめて更新する。"""
+        pos = max(0, int(pos))
+        dur = max(0, int(dur))
+        suffix = " (終了)" if ended else ""
+        self.time_label.setText(f"{format_ms(pos)} / {format_ms(dur)}{suffix}")
+        if ended:
+            self.remaining_label.setText("—")
+        elif dur <= 0:
+            self.remaining_label.setText("--:--")
+        else:
+            self.remaining_label.setText("-" + format_ms(max(0, dur - pos)))
     @Slot(int)
     def on_position_changed(self, pos: int) -> None:
         if not self.seek.isSliderDown():
             self.seek.setValue(pos)
-        self.time_label.setText(f"{format_ms(pos)} / {format_ms(self.player.duration())}")
+        self._sync_time_labels(pos, self.player.duration())
         self.update_subtitle(pos)
         self._maybe_ab_loop(pos)
 
     @Slot(int)
     def on_duration_changed(self, dur: int) -> None:
         self.seek.setRange(0, max(0, dur))
-        self.time_label.setText(f"{format_ms(self.player.position())} / {format_ms(dur)}")
+        self._sync_time_labels(self.player.position(), dur)
         # 前回位置の復元 (1回のみ)。範囲外は無視し、安全な遅延経路を使う。
         if self._restore_pos is not None:
             pos, self._restore_pos = self._restore_pos, None
@@ -2978,10 +3207,8 @@ class PlayerWindow(QMainWindow):
     @Slot(QMediaPlayer.PlaybackState)
     def on_state_changed(self, state: QMediaPlayer.PlaybackState) -> None:
         if state == QMediaPlayer.PlaybackState.PlayingState:
-            self.play_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPause))
             self.play_btn.setText("一時停止")
         else:
-            self.play_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay))
             self.play_btn.setText("再生")
             # 静止した時点のフレームを画像として固定する (スクリーンショット用)。
             self._cache_still_image()
@@ -3033,7 +3260,7 @@ class PlayerWindow(QMainWindow):
         if self._advance_if_in_playlist():
             return
         self._do_stop()
-        self.time_label.setText(f"00:00 / {format_ms(self.player.duration())} (終了)")
+        self._sync_time_labels(0, self.player.duration(), ended=True)
 
     def _show_deferred_error(self, gen: int, title: str, text: str) -> None:
         """再生シグナル内でのモーダル表示を避け、次のイベントで表示する。"""
@@ -3129,6 +3356,8 @@ def main(argv: list[str] | None = None) -> int:
     if "--selftest" in args:
         return _run_selftest(args)
     app = QApplication(sys.argv if argv is None else argv)
+    # ダイアログやツールチップも同じテーマにする (PlayerWindow にも設定済み)。
+    app.setStyleSheet(APP_STYLESHEET)
     if os.path.isfile(ICON_PATH):
         app.setWindowIcon(QIcon(ICON_PATH))
     w = PlayerWindow()
