@@ -43,75 +43,73 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Tasks]
 Name: "desktopicon"; Description: "デスクトップにショートカットを作成"; GroupDescription: "追加タスク:"; Languages: japanese
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Additional tasks:"; Languages: english
-Name: "associations"; Description: "動画ファイルをこのアプリで開く (既定のアプリの候補に登録)"; GroupDescription: "追加タスク:"; Languages: japanese
-Name: "associations"; Description: "Associate video files with this app"; GroupDescription: "Additional tasks:"; Languages: english
 
 [Files]
 Source: "{#RepoRoot}\dist\mplayer\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
 
 [Registry]
-Root: HKA; Subkey: "SOFTWARE\mplayer\Capabilities\FileAssociations"; ValueType: string; ValueName: ".mp4"; ValueData: "mplayer.mp4"; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\Classes\Applications\mplayer.exe\SupportedTypes"; ValueType: string; ValueName: ".mp4"; ValueData: ""; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\mplayer\Capabilities\FileAssociations"; ValueType: string; ValueName: ".mkv"; ValueData: "mplayer.mkv"; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\Classes\Applications\mplayer.exe\SupportedTypes"; ValueType: string; ValueName: ".mkv"; ValueData: ""; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\mplayer\Capabilities\FileAssociations"; ValueType: string; ValueName: ".avi"; ValueData: "mplayer.avi"; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\Classes\Applications\mplayer.exe\SupportedTypes"; ValueType: string; ValueName: ".avi"; ValueData: ""; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\mplayer\Capabilities\FileAssociations"; ValueType: string; ValueName: ".mov"; ValueData: "mplayer.mov"; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\Classes\Applications\mplayer.exe\SupportedTypes"; ValueType: string; ValueName: ".mov"; ValueData: ""; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\mplayer\Capabilities\FileAssociations"; ValueType: string; ValueName: ".webm"; ValueData: "mplayer.webm"; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\Classes\Applications\mplayer.exe\SupportedTypes"; ValueType: string; ValueName: ".webm"; ValueData: ""; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\mplayer\Capabilities\FileAssociations"; ValueType: string; ValueName: ".m4v"; ValueData: "mplayer.m4v"; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\Classes\Applications\mplayer.exe\SupportedTypes"; ValueType: string; ValueName: ".m4v"; ValueData: ""; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\mplayer\Capabilities\FileAssociations"; ValueType: string; ValueName: ".mpg"; ValueData: "mplayer.mpg"; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\Classes\Applications\mplayer.exe\SupportedTypes"; ValueType: string; ValueName: ".mpg"; ValueData: ""; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\mplayer\Capabilities\FileAssociations"; ValueType: string; ValueName: ".mpeg"; ValueData: "mplayer.mpeg"; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\Classes\Applications\mplayer.exe\SupportedTypes"; ValueType: string; ValueName: ".mpeg"; ValueData: ""; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\mplayer\Capabilities\FileAssociations"; ValueType: string; ValueName: ".wmv"; ValueData: "mplayer.wmv"; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\Classes\Applications\mplayer.exe\SupportedTypes"; ValueType: string; ValueName: ".wmv"; ValueData: ""; Tasks: associations
+Root: HKA; Subkey: "SOFTWARE\mplayer\Capabilities\FileAssociations"; ValueType: string; ValueName: ".mp4"; ValueData: "mplayer.mp4"
+Root: HKA; Subkey: "SOFTWARE\Classes\Applications\mplayer.exe\SupportedTypes"; ValueType: string; ValueName: ".mp4"; ValueData: ""
+Root: HKA; Subkey: "SOFTWARE\mplayer\Capabilities\FileAssociations"; ValueType: string; ValueName: ".mkv"; ValueData: "mplayer.mkv"
+Root: HKA; Subkey: "SOFTWARE\Classes\Applications\mplayer.exe\SupportedTypes"; ValueType: string; ValueName: ".mkv"; ValueData: ""
+Root: HKA; Subkey: "SOFTWARE\mplayer\Capabilities\FileAssociations"; ValueType: string; ValueName: ".avi"; ValueData: "mplayer.avi"
+Root: HKA; Subkey: "SOFTWARE\Classes\Applications\mplayer.exe\SupportedTypes"; ValueType: string; ValueName: ".avi"; ValueData: ""
+Root: HKA; Subkey: "SOFTWARE\mplayer\Capabilities\FileAssociations"; ValueType: string; ValueName: ".mov"; ValueData: "mplayer.mov"
+Root: HKA; Subkey: "SOFTWARE\Classes\Applications\mplayer.exe\SupportedTypes"; ValueType: string; ValueName: ".mov"; ValueData: ""
+Root: HKA; Subkey: "SOFTWARE\mplayer\Capabilities\FileAssociations"; ValueType: string; ValueName: ".webm"; ValueData: "mplayer.webm"
+Root: HKA; Subkey: "SOFTWARE\Classes\Applications\mplayer.exe\SupportedTypes"; ValueType: string; ValueName: ".webm"; ValueData: ""
+Root: HKA; Subkey: "SOFTWARE\mplayer\Capabilities\FileAssociations"; ValueType: string; ValueName: ".m4v"; ValueData: "mplayer.m4v"
+Root: HKA; Subkey: "SOFTWARE\Classes\Applications\mplayer.exe\SupportedTypes"; ValueType: string; ValueName: ".m4v"; ValueData: ""
+Root: HKA; Subkey: "SOFTWARE\mplayer\Capabilities\FileAssociations"; ValueType: string; ValueName: ".mpg"; ValueData: "mplayer.mpg"
+Root: HKA; Subkey: "SOFTWARE\Classes\Applications\mplayer.exe\SupportedTypes"; ValueType: string; ValueName: ".mpg"; ValueData: ""
+Root: HKA; Subkey: "SOFTWARE\mplayer\Capabilities\FileAssociations"; ValueType: string; ValueName: ".mpeg"; ValueData: "mplayer.mpeg"
+Root: HKA; Subkey: "SOFTWARE\Classes\Applications\mplayer.exe\SupportedTypes"; ValueType: string; ValueName: ".mpeg"; ValueData: ""
+Root: HKA; Subkey: "SOFTWARE\mplayer\Capabilities\FileAssociations"; ValueType: string; ValueName: ".wmv"; ValueData: "mplayer.wmv"
+Root: HKA; Subkey: "SOFTWARE\Classes\Applications\mplayer.exe\SupportedTypes"; ValueType: string; ValueName: ".wmv"; ValueData: ""
 ; Windows の「既定のアプリ」画面にアプリを表示するための登録
-Root: HKA; Subkey: "SOFTWARE\mplayer\Capabilities"; ValueType: string; ValueName: "ApplicationName"; ValueData: "シンプル動画プレイヤー"; Flags: uninsdeletekey; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\mplayer\Capabilities"; ValueType: string; ValueName: "ApplicationDescription"; ValueData: "シンプル動画プレイヤー"; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\mplayer\Capabilities"; ValueType: string; ValueName: "ApplicationIcon"; ValueData: "{app}\{#AppExeName},0"; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\RegisteredApplications"; ValueType: string; ValueName: "mplayer"; ValueData: "SOFTWARE\mplayer\Capabilities"; Flags: uninsdeletevalue; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\Classes\Applications\mplayer.exe"; ValueType: string; ValueName: ""; ValueData: "シンプル動画プレイヤー"; Flags: uninsdeletekey; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\Classes\Applications\mplayer.exe"; ValueType: string; ValueName: "FriendlyAppName"; ValueData: "シンプル動画プレイヤー"; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\Classes\Applications\mplayer.exe\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExeName}"" ""%1"""; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\Classes\mplayer\FileAssociations"; ValueType: string; ValueName: ".mp4"; ValueData: "mplayer.mp4"; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\Classes\mplayer.mp4"; ValueType: string; ValueName: ""; ValueData: "シンプル動画プレイヤー 動画ファイル"; Flags: uninsdeletekey; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\Classes\mplayer.mp4\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#AppExeName},0"; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\Classes\mplayer.mp4\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExeName}"" ""%1"""; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\Classes\mplayer\FileAssociations"; ValueType: string; ValueName: ".mkv"; ValueData: "mplayer.mkv"; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\Classes\mplayer.mkv"; ValueType: string; ValueName: ""; ValueData: "シンプル動画プレイヤー 動画ファイル"; Flags: uninsdeletekey; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\Classes\mplayer.mkv\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#AppExeName},0"; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\Classes\mplayer.mkv\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExeName}"" ""%1"""; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\Classes\mplayer\FileAssociations"; ValueType: string; ValueName: ".avi"; ValueData: "mplayer.avi"; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\Classes\mplayer.avi"; ValueType: string; ValueName: ""; ValueData: "シンプル動画プレイヤー 動画ファイル"; Flags: uninsdeletekey; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\Classes\mplayer.avi\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#AppExeName},0"; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\Classes\mplayer.avi\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExeName}"" ""%1"""; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\Classes\mplayer\FileAssociations"; ValueType: string; ValueName: ".mov"; ValueData: "mplayer.mov"; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\Classes\mplayer.mov"; ValueType: string; ValueName: ""; ValueData: "シンプル動画プレイヤー 動画ファイル"; Flags: uninsdeletekey; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\Classes\mplayer.mov\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#AppExeName},0"; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\Classes\mplayer.mov\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExeName}"" ""%1"""; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\Classes\mplayer\FileAssociations"; ValueType: string; ValueName: ".webm"; ValueData: "mplayer.webm"; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\Classes\mplayer.webm"; ValueType: string; ValueName: ""; ValueData: "シンプル動画プレイヤー 動画ファイル"; Flags: uninsdeletekey; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\Classes\mplayer.webm\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#AppExeName},0"; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\Classes\mplayer.webm\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExeName}"" ""%1"""; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\Classes\mplayer\FileAssociations"; ValueType: string; ValueName: ".m4v"; ValueData: "mplayer.m4v"; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\Classes\mplayer.m4v"; ValueType: string; ValueName: ""; ValueData: "シンプル動画プレイヤー 動画ファイル"; Flags: uninsdeletekey; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\Classes\mplayer.m4v\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#AppExeName},0"; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\Classes\mplayer.m4v\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExeName}"" ""%1"""; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\Classes\mplayer\FileAssociations"; ValueType: string; ValueName: ".mpg"; ValueData: "mplayer.mpg"; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\Classes\mplayer.mpg"; ValueType: string; ValueName: ""; ValueData: "シンプル動画プレイヤー 動画ファイル"; Flags: uninsdeletekey; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\Classes\mplayer.mpg\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#AppExeName},0"; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\Classes\mplayer.mpg\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExeName}"" ""%1"""; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\Classes\mplayer\FileAssociations"; ValueType: string; ValueName: ".mpeg"; ValueData: "mplayer.mpeg"; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\Classes\mplayer.mpeg"; ValueType: string; ValueName: ""; ValueData: "シンプル動画プレイヤー 動画ファイル"; Flags: uninsdeletekey; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\Classes\mplayer.mpeg\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#AppExeName},0"; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\Classes\mplayer.mpeg\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExeName}"" ""%1"""; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\Classes\mplayer\FileAssociations"; ValueType: string; ValueName: ".wmv"; ValueData: "mplayer.wmv"; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\Classes\mplayer.wmv"; ValueType: string; ValueName: ""; ValueData: "シンプル動画プレイヤー 動画ファイル"; Flags: uninsdeletekey; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\Classes\mplayer.wmv\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#AppExeName},0"; Tasks: associations
-Root: HKA; Subkey: "SOFTWARE\Classes\mplayer.wmv\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExeName}"" ""%1"""; Tasks: associations
+Root: HKA; Subkey: "SOFTWARE\mplayer\Capabilities"; ValueType: string; ValueName: "ApplicationName"; ValueData: "シンプル動画プレイヤー"; Flags: uninsdeletekey
+Root: HKA; Subkey: "SOFTWARE\mplayer\Capabilities"; ValueType: string; ValueName: "ApplicationDescription"; ValueData: "シンプル動画プレイヤー"
+Root: HKA; Subkey: "SOFTWARE\mplayer\Capabilities"; ValueType: string; ValueName: "ApplicationIcon"; ValueData: "{app}\{#AppExeName},0"
+Root: HKA; Subkey: "SOFTWARE\RegisteredApplications"; ValueType: string; ValueName: "mplayer"; ValueData: "SOFTWARE\mplayer\Capabilities"; Flags: uninsdeletevalue
+Root: HKA; Subkey: "SOFTWARE\Classes\Applications\mplayer.exe"; ValueType: string; ValueName: ""; ValueData: "シンプル動画プレイヤー"; Flags: uninsdeletekey
+Root: HKA; Subkey: "SOFTWARE\Classes\Applications\mplayer.exe"; ValueType: string; ValueName: "FriendlyAppName"; ValueData: "シンプル動画プレイヤー"
+Root: HKA; Subkey: "SOFTWARE\Classes\Applications\mplayer.exe\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExeName}"" ""%1"""
+Root: HKA; Subkey: "SOFTWARE\Classes\mplayer\FileAssociations"; ValueType: string; ValueName: ".mp4"; ValueData: "mplayer.mp4"
+Root: HKA; Subkey: "SOFTWARE\Classes\mplayer.mp4"; ValueType: string; ValueName: ""; ValueData: "シンプル動画プレイヤー 動画ファイル"; Flags: uninsdeletekey
+Root: HKA; Subkey: "SOFTWARE\Classes\mplayer.mp4\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#AppExeName},0"
+Root: HKA; Subkey: "SOFTWARE\Classes\mplayer.mp4\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExeName}"" ""%1"""
+Root: HKA; Subkey: "SOFTWARE\Classes\mplayer\FileAssociations"; ValueType: string; ValueName: ".mkv"; ValueData: "mplayer.mkv"
+Root: HKA; Subkey: "SOFTWARE\Classes\mplayer.mkv"; ValueType: string; ValueName: ""; ValueData: "シンプル動画プレイヤー 動画ファイル"; Flags: uninsdeletekey
+Root: HKA; Subkey: "SOFTWARE\Classes\mplayer.mkv\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#AppExeName},0"
+Root: HKA; Subkey: "SOFTWARE\Classes\mplayer.mkv\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExeName}"" ""%1"""
+Root: HKA; Subkey: "SOFTWARE\Classes\mplayer\FileAssociations"; ValueType: string; ValueName: ".avi"; ValueData: "mplayer.avi"
+Root: HKA; Subkey: "SOFTWARE\Classes\mplayer.avi"; ValueType: string; ValueName: ""; ValueData: "シンプル動画プレイヤー 動画ファイル"; Flags: uninsdeletekey
+Root: HKA; Subkey: "SOFTWARE\Classes\mplayer.avi\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#AppExeName},0"
+Root: HKA; Subkey: "SOFTWARE\Classes\mplayer.avi\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExeName}"" ""%1"""
+Root: HKA; Subkey: "SOFTWARE\Classes\mplayer\FileAssociations"; ValueType: string; ValueName: ".mov"; ValueData: "mplayer.mov"
+Root: HKA; Subkey: "SOFTWARE\Classes\mplayer.mov"; ValueType: string; ValueName: ""; ValueData: "シンプル動画プレイヤー 動画ファイル"; Flags: uninsdeletekey
+Root: HKA; Subkey: "SOFTWARE\Classes\mplayer.mov\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#AppExeName},0"
+Root: HKA; Subkey: "SOFTWARE\Classes\mplayer.mov\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExeName}"" ""%1"""
+Root: HKA; Subkey: "SOFTWARE\Classes\mplayer\FileAssociations"; ValueType: string; ValueName: ".webm"; ValueData: "mplayer.webm"
+Root: HKA; Subkey: "SOFTWARE\Classes\mplayer.webm"; ValueType: string; ValueName: ""; ValueData: "シンプル動画プレイヤー 動画ファイル"; Flags: uninsdeletekey
+Root: HKA; Subkey: "SOFTWARE\Classes\mplayer.webm\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#AppExeName},0"
+Root: HKA; Subkey: "SOFTWARE\Classes\mplayer.webm\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExeName}"" ""%1"""
+Root: HKA; Subkey: "SOFTWARE\Classes\mplayer\FileAssociations"; ValueType: string; ValueName: ".m4v"; ValueData: "mplayer.m4v"
+Root: HKA; Subkey: "SOFTWARE\Classes\mplayer.m4v"; ValueType: string; ValueName: ""; ValueData: "シンプル動画プレイヤー 動画ファイル"; Flags: uninsdeletekey
+Root: HKA; Subkey: "SOFTWARE\Classes\mplayer.m4v\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#AppExeName},0"
+Root: HKA; Subkey: "SOFTWARE\Classes\mplayer.m4v\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExeName}"" ""%1"""
+Root: HKA; Subkey: "SOFTWARE\Classes\mplayer\FileAssociations"; ValueType: string; ValueName: ".mpg"; ValueData: "mplayer.mpg"
+Root: HKA; Subkey: "SOFTWARE\Classes\mplayer.mpg"; ValueType: string; ValueName: ""; ValueData: "シンプル動画プレイヤー 動画ファイル"; Flags: uninsdeletekey
+Root: HKA; Subkey: "SOFTWARE\Classes\mplayer.mpg\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#AppExeName},0"
+Root: HKA; Subkey: "SOFTWARE\Classes\mplayer.mpg\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExeName}"" ""%1"""
+Root: HKA; Subkey: "SOFTWARE\Classes\mplayer\FileAssociations"; ValueType: string; ValueName: ".mpeg"; ValueData: "mplayer.mpeg"
+Root: HKA; Subkey: "SOFTWARE\Classes\mplayer.mpeg"; ValueType: string; ValueName: ""; ValueData: "シンプル動画プレイヤー 動画ファイル"; Flags: uninsdeletekey
+Root: HKA; Subkey: "SOFTWARE\Classes\mplayer.mpeg\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#AppExeName},0"
+Root: HKA; Subkey: "SOFTWARE\Classes\mplayer.mpeg\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExeName}"" ""%1"""
+Root: HKA; Subkey: "SOFTWARE\Classes\mplayer\FileAssociations"; ValueType: string; ValueName: ".wmv"; ValueData: "mplayer.wmv"
+Root: HKA; Subkey: "SOFTWARE\Classes\mplayer.wmv"; ValueType: string; ValueName: ""; ValueData: "シンプル動画プレイヤー 動画ファイル"; Flags: uninsdeletekey
+Root: HKA; Subkey: "SOFTWARE\Classes\mplayer.wmv\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#AppExeName},0"
+Root: HKA; Subkey: "SOFTWARE\Classes\mplayer.wmv\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExeName}"" ""%1"""
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"

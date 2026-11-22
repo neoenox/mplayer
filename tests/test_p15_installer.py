@@ -39,6 +39,8 @@ def main():
           and "PrivilegesRequired=lowest" in text)
     check("iss uses privilege-aware registry roots",
           "Root: HKLM" not in text and "Root: HKA" in text)
+    check("associations are unconditional",
+          "Tasks: associations" not in text and 'Name: "associations"' not in text)
 
     setups = sorted(glob.glob(os.path.join(BASE, "dist", "installer",
                                            "mplayer-setup-*.exe")))
