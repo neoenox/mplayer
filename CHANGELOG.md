@@ -4,6 +4,11 @@
 形式は [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に準拠し、
 バージョンは [Semantic Versioning](https://semver.org/lang/ja/) に従います。
 
+## [1.28.1] - 2026-11-22
+
+### Fixed
+- サイレント更新の適用ヘルパーが detached 起動時に動作しない問題を修正しました
+
 ## [1.28.0] - 2026-11-22
 
 ### Added
