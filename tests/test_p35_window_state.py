@@ -31,7 +31,7 @@ from main import (HELP_NOTES, WINDOW_DEFAULT_H, WINDOW_DEFAULT_W,  # noqa: E402
                   WINDOW_MIN_W, PlayerWindow, sanitize_window_rect, __version__)
 
 # 復元に使う値。画面 (CI/オフスクリーンとも) に収まる小さめの値にする。
-X, Y, W, H = 40, 30, 640, 440
+X, Y, W, H = 40, 30, 703, 440
 
 KEYS = ["h", "maximized", "playlist_dock", "w", "x", "y"]
 
