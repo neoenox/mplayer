@@ -176,7 +176,7 @@ def collect_video_files(path: str, recursive: bool = True,
     return out
 
 APP_NAME = "シンプル動画プレイヤー"
-__version__ = "1.28.0"
+__version__ = "1.28.1"
 
 
 def _resource_path(rel: str) -> str:

@@ -7,6 +7,8 @@ import json
 import shutil
 import tempfile
 import zipfile
+import subprocess
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from helpers import check, finish, make_app, patch_message_boxes
@@ -72,6 +74,33 @@ def main():
     if stage:
         shutil.rmtree(stage, ignore_errors=True)
     shutil.rmtree(tmpdir, ignore_errors=True)
+    # 終了後適用ヘルパーが実際に動くか (短命プロセスのPIDで終了を模擬)。
+    apply_base = tempfile.mkdtemp(prefix="mplayer-apply-")
+    apply_app = os.path.join(apply_base, "mplayer")
+    apply_stage = os.path.join(apply_base, "mplayer-update")
+    os.makedirs(apply_app)
+    os.makedirs(apply_stage)
+    dummy = r"C:\Windows\System32\where.exe"
+    shutil.copy(dummy, os.path.join(apply_app, "mplayer.exe"))
+    shutil.copy(dummy, os.path.join(apply_stage, "mplayer.exe"))
+    with open(os.path.join(apply_app, "resume.json"), "w", encoding="utf-8") as f:
+        f.write("{}")
+    with open(os.path.join(apply_stage, "applied-marker.txt"), "w", encoding="utf-8") as f:
+        f.write("ok")
+    short = subprocess.Popen([sys.executable, "-c", "pass"])
+    short.wait()
+    updater.start_apply(apply_app, apply_stage, pid=short.pid, exe_name="mplayer.exe")
+    marker = os.path.join(apply_app, "applied-marker.txt")
+    applied = False
+    for _ in range(40):
+        if os.path.isfile(marker):
+            applied = True
+            break
+        time.sleep(0.25)
+    check("updater applies staged package", applied)
+    check("updater preserves resume.json",
+          os.path.isfile(os.path.join(apply_app, "resume.json")))
+    shutil.rmtree(apply_base, ignore_errors=True)
 
     make_app()
     w = app_main.PlayerWindow()

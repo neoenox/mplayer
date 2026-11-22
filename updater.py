@@ -231,11 +231,7 @@ def start_apply(app_dir: str, stage_dir: str, pid: int | None = None,
     args = ["powershell.exe", "-NoProfile", "-NonInteractive",
             "-ExecutionPolicy", "Bypass", "-File", script,
             app_dir, stage_dir, str(os.getpid() if pid is None else pid), exe_name]
-    flags = 0
-    if os.name == "nt":
-        flags = (getattr(subprocess, "CREATE_NO_WINDOW", 0)
-                 | getattr(subprocess, "DETACHED_PROCESS", 0)
-                 | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
     subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                      stderr=subprocess.DEVNULL, close_fds=True, creationflags=flags)
     log(f"apply scheduled: {stage_dir}")
