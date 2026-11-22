@@ -12,7 +12,7 @@ from main import SHORTCUTS, PlayerWindow, build_help_html
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 VIDEO = os.path.join(BASE, "test_640x360.mp4")
-RESUME = os.path.join(BASE, "resume.json")
+RESUME = os.environ.get("MPLAYER_RESUME_FILE", os.path.join(BASE, "resume.json"))
 
 
 def main():

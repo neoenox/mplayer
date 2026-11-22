@@ -17,6 +17,7 @@ import os
 import random
 import re
 import sys
+import tempfile
 import time
 
 from PySide6.QtCore import QEvent, QPointF, Qt, QTimer, QUrl, Slot
@@ -34,7 +35,13 @@ from PySide6.QtGui import (
     QTextLayout,
     QTextOption,
 )
-from PySide6.QtMultimedia import QAudioOutput, QMediaMetaData, QMediaPlayer
+from PySide6.QtMultimedia import (
+    QAudioDevice,
+    QAudioOutput,
+    QMediaDevices,
+    QMediaMetaData,
+    QMediaPlayer,
+)
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -74,6 +81,8 @@ AB_MIN_GAP_MS = 500
 # 字幕の遅延 (同期ズレ) 調整。1 回の操作で動かす量と、動かせる上限。
 SUB_DELAY_STEP_MS = 100
 SUB_DELAY_LIMIT_MS = 10000
+# ファイル単位の字幕遅延を覚えておく件数 (最後に触ったものから残す)。
+SUB_DELAY_MAX_ENTRIES = 100
 
 
 def format_sub_delay(ms: int) -> str:
@@ -86,6 +95,50 @@ def format_sub_delay(ms: int) -> str:
 def clamp_sub_delay(ms: int) -> int:
     """字幕遅延を上限内 (±SUB_DELAY_LIMIT_MS) に丸める。"""
     return max(-SUB_DELAY_LIMIT_MS, min(SUB_DELAY_LIMIT_MS, int(ms)))
+
+
+def audio_device_key(device: QAudioDevice) -> str:
+    """音声出力先の ID を session.json 用の文字列にする (既定は '')。"""
+    if device.isNull():
+        return ""
+    return bytes(device.id()).hex()
+
+
+def sanitize_sub_delay_map(value, limit=SUB_DELAY_MAX_ENTRIES) -> dict[str, int]:
+    """保存された「ファイル単位の字幕遅延」を検証し、使える分だけ返す。
+
+    - dict でない、キーが文字列でない、値が整数でない (真偽値を含む) ものは捨てる
+    - 値は遅延の上限内に丸める
+    - キーは recent_key() で正規化し、パスの表記違いは同じファイルとしてまとめる
+    - 上限を超えた分は古い方から落とす
+    """
+    out: dict[str, int] = {}
+    if not isinstance(value, dict):
+        return out
+    for path, ms in value.items():
+        if isinstance(path, str) and isinstance(ms, int) and not isinstance(ms, bool):
+            out[recent_key(path)] = clamp_sub_delay(ms)
+    while len(out) > limit:
+        out.pop(next(iter(out)))
+    return out
+
+
+def remember_sub_delay(mapping, path, ms: int,
+                       limit=SUB_DELAY_MAX_ENTRIES) -> dict[str, int]:
+    """ファイル単位の字幕遅延を更新した写しを返す。
+
+    - 0 に戻したら「覚えていない」状態に戻す (次に開いたときは 0 から)
+    - 同じファイルは最後の位置へ移す (上限で落とすとき古い順に落とすため)
+    """
+    out = dict(mapping)
+    if not path:
+        return out
+    out.pop(path, None)
+    if ms:
+        out[path] = clamp_sub_delay(ms)
+    while len(out) > limit:
+        out.pop(next(iter(out)))
+    return out
 
 
 def is_video_file(path: str) -> bool:
@@ -122,7 +175,7 @@ def collect_video_files(path: str, recursive: bool = True,
     return out
 
 APP_NAME = "シンプル動画プレイヤー"
-__version__ = "1.24.0"
+__version__ = "1.27.0"
 
 
 def _resource_path(rel: str) -> str:
@@ -133,8 +186,12 @@ def _resource_path(rel: str) -> str:
 
 ICON_PATH = _resource_path(os.path.join("assets", "app.ico"))
 
-# 前回再生位置の保存先 (アプリと同じフォルダ)。上限100件。
-RESUME_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "resume.json")
+# 前回再生位置の保存先 (既定はアプリと同じフォルダ)。上限100件。
+# テスト時は MPLAYER_RESUME_FILE で隔離できる。
+RESUME_FILE = os.environ.get(
+    "MPLAYER_RESUME_FILE",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "resume.json"),
+)
 # セッション (音量/ミュート/速度/プレイリスト) の保存先。
 # テスト時は MPLAYER_SESSION_FILE で隔離できる。
 SESSION_FILE = os.environ.get(
@@ -274,6 +331,24 @@ def format_ms(ms: int) -> str:
     return f"{m:02d}:{s:02d}"
 
 
+def _write_json_atomic(path: str, data, **kwargs) -> None:
+    """JSON を一時ファイル経由で書き換える (途中終了で壊れないように)。"""
+    directory = os.path.dirname(os.path.abspath(path)) or "."
+    fd, tmp = tempfile.mkstemp(prefix=".mplayer-", suffix=".json", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, **kwargs)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
+
+
 # ---------- 1 フレーム送り ----------
 FRAME_STEP_FALLBACK_MS = 33  # fps が取れないときの 1 フレーム (約 30fps)
 
@@ -364,26 +439,43 @@ def _parse_srt_timestamp(text: str) -> int:
     return int(h) * 3600000 + int(m) * 60000 + int(round(float(sec) * 1000))
 
 
+def _is_srt_timestamp_line(line: str) -> bool:
+    """SRT のタイムスタンプ行かどうか (本文の矢印と区別する)。"""
+    return "-->" in line and bool(re.search(r"\d{1,2}:\d{2}", line))
+
+
 def parse_srt(text: str) -> list[tuple[int, int, str]]:
     """SRT文字列を (開始ms, 終了ms, 本文) のリストに変換する。
 
-    不正なブロックは黙って読み飛ばす (破損ファイルでもクラッシュしない)。
+    空行区切りが無い SRT も扱える。不正なブロックは黙って読み飛ばす。
     """
     normalized = text.replace("\r\n", "\n").replace("\r", "\n").lstrip("\ufeff")
+    lines = normalized.split("\n")
     cues: list[tuple[int, int, str]] = []
-    for block in re.split(r"\n[ \t]*\n", normalized):
-        lines = block.split("\n")
-        ts_idx = next((i for i, ln in enumerate(lines) if "-->" in ln), None)
-        if ts_idx is None:
+    i = 0
+    while i < len(lines):
+        if not _is_srt_timestamp_line(lines[i]):
+            i += 1
             continue
-        left, _, right = lines[ts_idx].partition("-->")
+        left, _, right = lines[i].partition("-->")
         try:
             start = _parse_srt_timestamp(left)
             # 末尾に座標等が付く形式 ("... --> 00:00:02,000 X1:..") を許容
             end = _parse_srt_timestamp(right.strip().split()[0])
         except Exception:
+            i += 1
             continue
-        body = "\n".join(ln for ln in lines[ts_idx + 1:]).strip()
+        body_lines: list[str] = []
+        i += 1
+        while i < len(lines) and not _is_srt_timestamp_line(lines[i]):
+            stripped = lines[i].strip()
+            # 次のcueの番号行は本文に含めない
+            if (stripped.isdigit() and i + 1 < len(lines)
+                    and _is_srt_timestamp_line(lines[i + 1])):
+                break
+            body_lines.append(lines[i])
+            i += 1
+        body = "\n".join(body_lines).strip()
         if body:
             cues.append((start, end, body))
     cues.sort(key=lambda c: c[0])
@@ -584,6 +676,24 @@ SHORTCUTS = [
     ("F1", "このヘルプを表示"),
 ]
 
+# アクション識別子 -> 表示キー (説明は既存 SHORTCUTS を再利用)
+ACTION_KEYS = {
+    "open": "Ctrl+O", "shot": "Ctrl+S", "playpause": "Space",
+    "seek_back": "←", "seek_fwd": "→",
+    "prev_track": "Ctrl+←", "next_track": "Ctrl+→",
+    "volume_up": "↑", "volume_down": "↓",
+    "mute": "M", "subs": "S",
+    "ab_a": "A", "ab_b": "B", "ab_clear": "C",
+    "speed_up": "]", "speed_down": "[",
+    "frame_back": ",", "frame_fwd": ".",
+    "sub_delay_back": "Shift+,", "sub_delay_fwd": "Shift+.",
+    "shuffle": "Shift+S", "repeat": "Shift+R",
+    "fullscreen": "F / F11", "exit_fullscreen": "Esc", "help": "F1",
+    "fullscreen_f": "F / F11",
+}
+
+FIRST_HINT_TEXT = "F1 でショートカット一覧を開けます。操作はメニューとボタンからもできます。"
+
 MOUSE_HELP = [
     ("ダブルクリック", "全画面切替"),
     ("ホイール (映像上)", f"音量を {VOLUME_STEP} ずつ上下"),
@@ -605,9 +715,19 @@ HELP_NOTES = [
     "Ctrl+S で現在のフレームをスクリーンショット (PNG) として動画と同じフォルダに保存します。",
     ", / . で 1 フレームずつ戻る / 進む (再生中に押すと一時停止してから移動します)。",
     "Shift+, / Shift+. で字幕を 0.1 秒ずつ早める / 遅らせます (字幕メニューの「遅延」からも操作できます)。",
+    "字幕の遅延は動画ごとに覚えます (別の動画を開くと、その動画で前回合わせた値に戻ります)。",
     "「ファイル」→「プロパティ...」で解像度・フレームレート・ビットレートを確認できます。",
     "終了時に音量・速度・プレイリスト・字幕設定 (表示 ON/OFF 含む) を保存し、次回起動時に復元します。",
     "動画と同じフォルダに同名の .srt があれば、自動で読み込みます。",
+    "音が出ないときは「再生」→「音声出力先」で出力先を切り替えてください (既定は OS の既定デバイスに追従します)。",
+]
+
+# HELP_NOTES のインデックスをカテゴリごとにまとめる (項目文は変更しない)。
+HELP_CATEGORIES = [
+    ("ファイル", (0, 9, 11, 15)),
+    ("再生", (6, 7, 10, 12, 18)),
+    ("字幕", (3, 4, 5, 13, 14, 17)),
+    ("表示・設定", (1, 2, 8, 16)),
 ]
 
 
@@ -621,7 +741,12 @@ def build_help_html() -> str:
         f'<tr><td style="padding:2px 12px 2px 0;"><b>{k}</b></td>'
         f'<td style="padding:2px 0;">{v}</td></tr>'
         for k, v in MOUSE_HELP)
-    notes = "".join(f"<li>{n}</li>" for n in HELP_NOTES)
+    notes = "".join(
+        f"<h5>{category}</h5><ul>"
+        + "".join(f"<li>{HELP_NOTES[i]}</li>" for i in indexes)
+        + "</ul>"
+        for category, indexes in HELP_CATEGORIES
+    )
     return (
         f"<h3>{APP_NAME} v{__version__}</h3>"
         "<h4>キーボードショートカット</h4>"
@@ -670,6 +795,15 @@ class PlayerWindow(QMainWindow):
         self.player = QMediaPlayer(self)
         self.audio = QAudioOutput(self)
         self.player.setAudioOutput(self.audio)
+        # 音声出力先。既定 ('') は OS の既定デバイスに追従し、
+        # 「再生」→「音声出力先」から特定のデバイスに固定できる。
+        self._audio_device_key = ""
+        self._audio_devices: dict[str, QAudioDevice] = {}
+        self._audio_device_menu: QMenu | None = None
+        self._audio_device_group = QActionGroup(self)
+        self._audio_device_group.setExclusive(True)
+        self._media_devices = QMediaDevices(self)
+        self._media_devices.audioOutputsChanged.connect(self._on_audio_outputs_changed)
         self.video = QVideoWidget(self)
         # アスペクト比を保ったままウィンドウに追従
         self.video.setAspectRatioMode(Qt.AspectRatioMode.KeepAspectRatio)
@@ -693,8 +827,10 @@ class PlayerWindow(QMainWindow):
         self._sub_encoding = "auto"
         self._sub_color = (255, 255, 255)
         self._sub_font = ""
-        # 字幕の遅延 (ms)。+ で字幕が遅れて出る。全動画共通で保存する。
+        # 字幕の遅延 (ms)。+ で字幕が遅れて出る。
+        # 動画ごとに覚える (`_sub_delays`: パス → ms)。開いたときにその値へ切り替える。
         self._sub_delay_ms = 0
+        self._sub_delays: dict[str, int] = {}
         # プレイリストのシャッフル / リピート。全体設定として保存する。
         self._shuffle = False
         self._repeat = "off"
@@ -908,6 +1044,7 @@ class PlayerWindow(QMainWindow):
         # --- メニュー / ショートカット ---
         file_menu = self.menuBar().addMenu("ファイル")
         open_act = QAction("開く...", self)
+        open_act.setObjectName("open")
         open_act.setShortcut(QKeySequence.StandardKey.Open)
         open_act.triggered.connect(self.open_file_dialog)
         file_menu.addAction(open_act)
@@ -932,6 +1069,7 @@ class PlayerWindow(QMainWindow):
         # メニューとウィンドウ全体の両方に登録し、全画面 (メニューバー非表示) でも
         # Ctrl+S が効くようにする (A-B リピートと同じ作法)。
         self.shot_act = QAction("スクリーンショットを保存", self)
+        self.shot_act.setObjectName("shot")
         self.shot_act.setShortcut(QKeySequence("Ctrl+S"))
         self.shot_act.triggered.connect(lambda: self.screenshot())
         file_menu.addAction(self.shot_act)
@@ -947,73 +1085,87 @@ class PlayerWindow(QMainWindow):
         file_menu.addAction(self.props_act)
 
         self.fs_act = QAction("全画面切替", self)
+        self.fs_act.setObjectName("fullscreen")
         self.fs_act.setShortcut(Qt.Key.Key_F11)
         self.fs_act.triggered.connect(self.toggle_fullscreen)
         self.addAction(self.fs_act)
 
         esc_act = QAction(self)
+        esc_act.setObjectName("exit_fullscreen")
         esc_act.setShortcut(Qt.Key.Key_Escape)
         esc_act.triggered.connect(self.exit_fullscreen)
         self.addAction(esc_act)
 
         # Space: 再生/一時停止。ボタン類はNoFocusのため二重発火しない。
         space_act = QAction(self)
+        space_act.setObjectName("playpause")
         space_act.setShortcut(Qt.Key.Key_Space)
         space_act.triggered.connect(self.toggle_play)
         self.addAction(space_act)
 
         left_act = QAction(self)
+        left_act.setObjectName("seek_back")
         left_act.setShortcut(Qt.Key.Key_Left)
         left_act.triggered.connect(lambda: self.seek_by(-5000))
         self.addAction(left_act)
 
         right_act = QAction(self)
+        right_act.setObjectName("seek_fwd")
         right_act.setShortcut(Qt.Key.Key_Right)
         right_act.triggered.connect(lambda: self.seek_by(5000))
         self.addAction(right_act)
 
         f_act = QAction(self)
+        f_act.setObjectName("fullscreen_f")
         f_act.setShortcut(Qt.Key.Key_F)
         f_act.triggered.connect(self.toggle_fullscreen)
         self.addAction(f_act)
 
         m_act = QAction(self)
+        m_act.setObjectName("mute")
         m_act.setShortcut(Qt.Key.Key_M)
         m_act.triggered.connect(lambda: self.mute_btn.click())
         self.addAction(m_act)
 
         up_act = QAction(self)
+        up_act.setObjectName("volume_up")
         up_act.setShortcut(Qt.Key.Key_Up)
         up_act.triggered.connect(lambda: self.vol.setValue(min(100, self.vol.value() + 10)))
         self.addAction(up_act)
 
         down_act = QAction(self)
+        down_act.setObjectName("volume_down")
         down_act.setShortcut(Qt.Key.Key_Down)
         down_act.triggered.connect(lambda: self.vol.setValue(max(0, self.vol.value() - 10)))
         self.addAction(down_act)
 
         s_act = QAction(self)
+        s_act.setObjectName("subs")
         s_act.setShortcut(Qt.Key.Key_S)
         s_act.triggered.connect(lambda: self.subs_btn.click())
         self.addAction(s_act)
 
         next_act = QAction(self)
+        next_act.setObjectName("next_track")
         next_act.setShortcut(QKeySequence("Ctrl+Right"))
         next_act.triggered.connect(self.play_next)
         self.addAction(next_act)
 
         prev_act = QAction(self)
+        prev_act.setObjectName("prev_track")
         prev_act.setShortcut(QKeySequence("Ctrl+Left"))
         prev_act.triggered.connect(self.play_prev)
         self.addAction(prev_act)
 
         # 再生速度: ] で上げる / [ で下げる (端では据え置き)。
         self.speed_up_act = QAction(self)
+        self.speed_up_act.setObjectName("speed_up")
         self.speed_up_act.setShortcut(QKeySequence(Qt.Key.Key_BracketRight))
         self.speed_up_act.triggered.connect(self.speed_up)
         self.addAction(self.speed_up_act)
 
         self.speed_down_act = QAction(self)
+        self.speed_down_act.setObjectName("speed_down")
         self.speed_down_act.setShortcut(QKeySequence(Qt.Key.Key_BracketLeft))
         self.speed_down_act.triggered.connect(self.speed_down)
         self.addAction(self.speed_down_act)
@@ -1021,19 +1173,26 @@ class PlayerWindow(QMainWindow):
         # A-B リピート (区間リピート)。メニューに載せつつ、全画面でも効くよう
         # ウィンドウ全体のショートカットとしても登録する。
         play_menu = self.menuBar().addMenu("再生")
+        play_menu.addSeparator()
+        self._audio_device_menu = play_menu.addMenu("音声出力先")
+        self._refresh_audio_device_menu()
+        play_menu.addSeparator()
         self.ab_a_act = QAction("A-B: A 点を設定", self)
+        self.ab_a_act.setObjectName("ab_a")
         self.ab_a_act.setShortcut(Qt.Key.Key_A)
         self.ab_a_act.triggered.connect(self.set_ab_a)
         play_menu.addAction(self.ab_a_act)
         self.addAction(self.ab_a_act)
 
         self.ab_b_act = QAction("A-B: B 点を設定してループ", self)
+        self.ab_b_act.setObjectName("ab_b")
         self.ab_b_act.setShortcut(Qt.Key.Key_B)
         self.ab_b_act.triggered.connect(self.set_ab_b)
         play_menu.addAction(self.ab_b_act)
         self.addAction(self.ab_b_act)
 
         self.ab_clear_act = QAction("A-B リピートを解除", self)
+        self.ab_clear_act.setObjectName("ab_clear")
         self.ab_clear_act.setShortcut(Qt.Key.Key_C)
         self.ab_clear_act.triggered.connect(self.clear_ab)
         play_menu.addAction(self.ab_clear_act)
@@ -1043,12 +1202,14 @@ class PlayerWindow(QMainWindow):
         # メニューに載せつつ、全画面でも効くようウィンドウ全体にも登録)。
         play_menu.addSeparator()
         self.step_back_act = QAction("1 フレーム戻る", self)
+        self.step_back_act.setObjectName("frame_back")
         self.step_back_act.setShortcut(QKeySequence(Qt.Key.Key_Comma))
         self.step_back_act.triggered.connect(self.step_frame_back)
         play_menu.addAction(self.step_back_act)
         self.addAction(self.step_back_act)
 
         self.step_fwd_act = QAction("1 フレーム進む", self)
+        self.step_fwd_act.setObjectName("frame_fwd")
         self.step_fwd_act.setShortcut(QKeySequence(Qt.Key.Key_Period))
         self.step_fwd_act.triggered.connect(self.step_frame_forward)
         play_menu.addAction(self.step_fwd_act)
@@ -1058,6 +1219,7 @@ class PlayerWindow(QMainWindow):
         # 全画面 (メニューバー非表示) でも効くようウィンドウ全体にも登録する。
         play_menu.addSeparator()
         self.shuffle_act = QAction("シャッフル再生", self)
+        self.shuffle_act.setObjectName("shuffle")
         self.shuffle_act.setCheckable(True)
         self.shuffle_act.setShortcut(
             QKeySequence(Qt.Key.Key_S | Qt.KeyboardModifier.ShiftModifier))
@@ -1066,6 +1228,7 @@ class PlayerWindow(QMainWindow):
         self.addAction(self.shuffle_act)
 
         self.repeat_act = QAction("リピート切替", self)
+        self.repeat_act.setObjectName("repeat")
         self.repeat_act.setShortcut(
             QKeySequence(Qt.Key.Key_R | Qt.KeyboardModifier.ShiftModifier))
         self.repeat_act.triggered.connect(self.cycle_repeat)
@@ -1153,8 +1316,9 @@ class PlayerWindow(QMainWindow):
         # 字幕の遅延 (同期ズレ) 調整。A-B やフレーム送りと同じく、メニューに
         # 載せつつ全画面でも効くようウィンドウ全体にも登録する。
         sub_menu.addSeparator()
-        self._sub_delay_menu = sub_menu.addMenu(f"遅延 (±{SUB_DELAY_STEP_MS / 1000:.1f} 秒)")
+        self._sub_delay_menu = sub_menu.addMenu(f"遅延 (±{SUB_DELAY_LIMIT_MS / 1000:.0f} 秒)")
         self.sub_delay_act = QAction("字幕を 0.1 秒遅らせる", self)
+        self.sub_delay_act.setObjectName("sub_delay_fwd")
         self.sub_delay_act.setShortcut(
             QKeySequence(Qt.Key.Key_Period | Qt.KeyboardModifier.ShiftModifier))
         self.sub_delay_act.triggered.connect(self.delay_subtitles)
@@ -1162,6 +1326,7 @@ class PlayerWindow(QMainWindow):
         self.addAction(self.sub_delay_act)
 
         self.sub_advance_act = QAction("字幕を 0.1 秒早める", self)
+        self.sub_advance_act.setObjectName("sub_delay_back")
         self.sub_advance_act.setShortcut(
             QKeySequence(Qt.Key.Key_Comma | Qt.KeyboardModifier.ShiftModifier))
         self.sub_advance_act.triggered.connect(self.advance_subtitles)
@@ -1181,6 +1346,7 @@ class PlayerWindow(QMainWindow):
 
         help_menu = self.menuBar().addMenu("ヘルプ")
         self.help_act = QAction("ショートカット一覧", self)
+        self.help_act.setObjectName("help")
         self.help_act.setShortcut(Qt.Key.Key_F1)
         self.help_act.triggered.connect(self.show_shortcuts)
         help_menu.addAction(self.help_act)
@@ -1188,6 +1354,7 @@ class PlayerWindow(QMainWindow):
         about_act = QAction("バージョン情報", self)
         about_act.triggered.connect(self.show_about)
         help_menu.addAction(about_act)
+        self._install_action_tooltips()
         self._help_dialog: HelpDialog | None = None
         self._is_fullscreen = False
         # 全画面に入る前のウィンドウ矩形と最大化状態 (全画面のまま終了しても
@@ -1203,9 +1370,14 @@ class PlayerWindow(QMainWindow):
         self._fs_timer.setSingleShot(True)
         self._fs_timer.timeout.connect(self._hide_fs_controls)
         self._suppress_error_box = False
+        # 初回ヒントの既読状態。restore_session() で上書きされる。
+        self._hint_seen = True
         # 遅延シークの世代管理。load()ごとに加算し、古いファイル向けの
         # 予約シークが新ファイルへ誤適用されるのを防ぐ (P5)。
         self._media_gen = 0
+        # 新しいソース読込時だけ保持フレームを捨てるための印 (シーク時の
+        # LoadedMedia では捨てない)。
+        self._frame_source_pending = False
         # 予約中のシーク先 (連続キー入力時に最新予約を基準にするため)。
         self._pending_seek = None
         # 再生速度 (QMediaPlayer.setPlaybackRate)。既定1.0。
@@ -1234,6 +1406,7 @@ class PlayerWindow(QMainWindow):
         # メッセージを表示する時間 (ms)。
         self._last_frame = None
         self._last_image = None
+        self._image_frame = None  # _last_image を変換した元フレーム
         self._shot_hide_ms = 3000
         self._shot_timer = QTimer(self)
         self._shot_timer.setSingleShot(True)
@@ -1257,10 +1430,14 @@ class PlayerWindow(QMainWindow):
         self._suppress_error_box = False
         self._media_gen += 1
         self._pending_seek = None
+        self._frame_source_pending = True
         self._current_path = os.path.abspath(path)
         # 「最近使ったファイル」の先頭に置く (同じファイルは 1 つにまとめる)
         self._recent = recent_add(self._recent, self._current_path)
         self._refresh_recent_menu()
+        # 字幕の遅延はファイル単位 (前のファイルの値を引きずらない)
+        self.set_sub_delay(self._sub_delays.get(recent_key(self._current_path), 0),
+                           notify=False)
         self._restore_pos = self._resume_pos_for(self._current_path)
         # 字幕をリセットし、同名 .srt があれば自動で読み込む
         self.clear_subtitles()
@@ -1270,6 +1447,7 @@ class PlayerWindow(QMainWindow):
         # 保存してしまわないように)。
         self._last_frame = None
         self._last_image = None
+        self._image_frame = None
         self.player.setSource(QUrl.fromLocalFile(path))
         self.play_btn.setEnabled(True)
         self.stop_btn.setEnabled(True)
@@ -1296,8 +1474,7 @@ class PlayerWindow(QMainWindow):
         try:
             while len(self._resume) > RESUME_MAX_ENTRIES:
                 self._resume.pop(next(iter(self._resume)))
-            with open(RESUME_FILE, "w", encoding="utf-8") as f:
-                json.dump(self._resume, f, ensure_ascii=False)
+            _write_json_atomic(RESUME_FILE, self._resume, ensure_ascii=False)
         except Exception:
             pass
 
@@ -1382,6 +1559,7 @@ class PlayerWindow(QMainWindow):
         data = {
             "volume": self.vol.value(),
             "muted": self.mute_btn.isChecked(),
+            "audio_device": self._audio_device_key,
             "rate": self._rates[self._rate_idx],
             "subtitle_size": self._sub_size,
             "subtitle_pos": self._sub_pos,
@@ -1392,16 +1570,18 @@ class PlayerWindow(QMainWindow):
             "subtitle_color": list(self._sub_color),
             "subtitle_font": self._sub_font,
             "subtitle_delay_ms": self._sub_delay_ms,
+            # 動画ごとの字幕遅延 (パス → ms)
+            "subtitle_delay_files": sanitize_sub_delay_map(self._sub_delays),
             "playlist": self.playlist_paths(),
             "shuffle": self._shuffle,
             "repeat": self._repeat,
             "window": self.window_state_for_save(),
             # 消えているファイルはここで掃除する (履歴が延び続けないように)
             "recent": recent_prune(self._recent),
+            "hint_seen": bool(self._hint_seen),
         }
         try:
-            with open(SESSION_FILE, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
+            _write_json_atomic(SESSION_FILE, data, ensure_ascii=False, indent=2)
         except Exception:
             pass
 
@@ -1415,6 +1595,9 @@ class PlayerWindow(QMainWindow):
         if isinstance(muted, bool):
             self.mute_btn.setChecked(muted)
             self.audio.setMuted(muted)
+        device_key = s.get("audio_device")
+        if isinstance(device_key, str):
+            self.set_audio_device(device_key)
         rate = s.get("rate")
         if rate in self._rates:
             self._rate_idx = self._rates.index(rate)
@@ -1458,8 +1641,16 @@ class PlayerWindow(QMainWindow):
             self.set_repeat(repeat, notify=False)
         self.set_subtitle_color(s.get("subtitle_color"))
         self.set_subtitle_font(s.get("subtitle_font"))
+        self._hint_seen = s.get("hint_seen") is True
+        delays = s.get("subtitle_delay_files")
+        if isinstance(delays, dict):
+            self._sub_delays = sanitize_sub_delay_map(delays)
         delay = s.get("subtitle_delay_ms")
-        if isinstance(delay, int) and not isinstance(delay, bool):
+        # 旧形式の共通遅延は起動時 (動画を開く前) だけ反映する。
+        # オープン中に適用すると per-file マップへ記録され、
+        # 「最初に開いた動画で旧値は破棄される」という仕様と矛盾する。
+        if (not self._current_path and isinstance(delay, int)
+                and not isinstance(delay, bool)):
             # 復元時はメッセージを出さない (起動直後の操作系を汚さない)
             self.set_sub_delay(delay, notify=False)
         # 最近使ったファイル (消えているファイルはここで除く)
@@ -1672,7 +1863,7 @@ class PlayerWindow(QMainWindow):
         self._subs_enabled = show
         self._current_sub_path = path if cues else None
         self._sub_used_encoding = used if cues else ""
-        self.subs_btn.setChecked(bool(cues))
+        self.subs_btn.setChecked(show)
         self.subs_btn.setText("字幕 ON" if show else "字幕")
         self.update_subtitle(self.player.position())
         return bool(cues)
@@ -1734,6 +1925,10 @@ class PlayerWindow(QMainWindow):
     def set_sub_delay(self, ms: int, notify: bool = True) -> int:
         """字幕の遅延を設定する (上限内に丸める)。適用後の値を返す。"""
         value = clamp_sub_delay(ms)
+        # ファイル単位の遅延として覚える (0 に戻したら忘れる)。
+        # 値が同じでも記憶を触る (上限到達時の古い方からの除外を正しくするため)。
+        key = recent_key(self._current_path) if self._current_path else None
+        self._sub_delays = remember_sub_delay(self._sub_delays, key, value)
         if value == self._sub_delay_ms:
             if notify:
                 self._show_shot_message(f"字幕の遅延: {format_sub_delay(value)}")
@@ -1895,9 +2090,10 @@ class PlayerWindow(QMainWindow):
                     return self._row_of(self._shuffle_paths[0])
                 return self._row_of(order[-1])
             return None
-        row = self.playlist.currentRow()
+        row = self._index_of_current()
         if row < 0:
-            row = self._index_of_current()
+            # 再生中でなければ選択行を基準にする
+            row = self.playlist.currentRow()
         if row < 0:
             return 0 if delta > 0 else count - 1
         nxt = row + delta
@@ -2223,18 +2419,21 @@ class PlayerWindow(QMainWindow):
     def _on_video_frame(self, frame) -> None:
         """表示中のフレームを保持する (スクリーンショット用)。
 
-        再生中はフレームを参照するだけ (コピーしない)。一時停止中は後から
-        変換できなくなる場合に備えて、その場で画像に複製しておく。
-        静止中は届く頻度が低いので、複製の負荷は無視できる。
+        再生中はフレームを参照するだけ (コピーしない)。一時停止中は
+        変換できたフレームを画像として複製し、直近の有効な画像を残す。
+        変換に失敗したフレームで上書きすると、一時停止直後に
+        スクリーンショットが失敗するためである。
         """
         try:
             if frame is None or not frame.isValid():
                 return
             self._last_frame = frame
             if self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
-                self._last_image = None
-            else:
-                self._last_image = self._frame_to_image(frame)
+                return
+            image = self._frame_to_image(frame)
+            if image is not None:
+                self._last_image = image
+                self._image_frame = frame
         except Exception:
             pass
 
@@ -2250,16 +2449,31 @@ class PlayerWindow(QMainWindow):
         return None if image.isNull() else image
 
     def _cache_still_image(self) -> None:
-        """一時停止/停止した時点のフレームを画像として固定する (1 度だけ)。"""
-        if self._last_image is not None or self._last_frame is None:
+        """一時停止/停止した時点のフレームを画像として固定する。"""
+        if self._last_frame is None:
             return
-        self._last_image = self._frame_to_image(self._last_frame)
+        image = self._frame_to_image(self._last_frame)
+        if image is not None:
+            self._last_image = image
+            self._image_frame = self._last_frame
 
     def screenshot_image(self):
-        """現在のフレームを QImage で返す (取得できないときは None)。"""
+        """現在のフレームを優先し、変換できない場合は直近の有効な画像を返す。"""
+        frame = self._last_frame
+        if frame is not None and frame.isValid():
+            # 同じフレームなら同じ QImage を返す (呼ぶたびに別オブジェクトに
+            # ならないようにして、更新待ちが正しく動くようにする)。
+            if self._image_frame is not frame:
+                image = self._frame_to_image(frame)
+                if image is not None:
+                    self._image_frame = frame
+                    self._last_image = image
+            if self._image_frame is frame and self._last_image is not None \
+                    and not self._last_image.isNull():
+                return self._last_image
         if self._last_image is not None and not self._last_image.isNull():
             return self._last_image
-        return self._frame_to_image(self._last_frame)
+        return None
 
     def has_frame(self) -> bool:
         """スクリーンショットに使える映像を保持しているか。"""
@@ -2321,12 +2535,36 @@ class PlayerWindow(QMainWindow):
             path += ".png"
         self.screenshot(path)
 
+    def _install_action_tooltips(self) -> None:
+        """SHORTCUTS とアクション text からツールチップを生成する。"""
+        def description_for(key: str) -> str:
+            for label, desc in SHORTCUTS:
+                if key == label or key in [part.strip() for part in label.split(" / ")]:
+                    return desc
+            return ""
+
+        for act in self.findChildren(QAction):
+            if act.isSeparator():
+                continue
+            key = ACTION_KEYS.get(act.objectName())
+            if key:
+                # text のある QAction は toolTip() が text を返すため、
+                # 識別子付きアクションは既存値に関わらず上書きする。
+                desc = act.text() or description_for(key)
+                act.setToolTip(f"{desc} ({key})" if desc else key)
+
+    def maybe_show_first_hint(self) -> None:
+        """初回起動時に一度だけ、他に通知が無ければヒントを出す。"""
+        if self._hint_seen or self.shot_label.isVisible() or self.shot_label.text():
+            return
+        self._show_shot_message(FIRST_HINT_TEXT)
+        self._hint_seen = True
+
     def _show_shot_message(self, text: str) -> None:
         self.shot_label.setText(text)
         self.shot_label.setVisible(True)
-        # 全画面で操作系が隠れているときは、メッセージが見えるように出す。
-        # 操作系を隠すタイマーが先に切れないよう、長い方に合わせる。
-        if self._is_fullscreen and not self.controls.isVisible():
+        # 全画面では、メッセージが消えるまで操作系も表示したままにする。
+        if self._is_fullscreen:
             self._show_fs_controls()
             self._fs_timer.start(max(self._fs_hide_ms, self._shot_hide_ms))
         self._shot_timer.start(self._shot_hide_ms)
@@ -2425,6 +2663,66 @@ class PlayerWindow(QMainWindow):
             pass
         self.speed_btn.setText(f"速度 {rate}x")
 
+    # ---------- 音声出力先 ----------
+    def _refresh_audio_device_menu(self) -> None:
+        menu = self._audio_device_menu
+        if menu is None:
+            return
+        for act in list(self._audio_device_group.actions()):
+            self._audio_device_group.removeAction(act)
+        menu.clear()
+        self._audio_devices = {
+            key: device
+            for device in QMediaDevices.audioOutputs()
+            if not device.isNull() and (key := audio_device_key(device))
+        }
+        # OS によって列挙順が違うため、説明順に並べる。
+        devices = sorted(
+            self._audio_devices.items(), key=lambda item: item[1].description())
+        current = "システム既定"
+        for key, device in devices:
+            if key == self._audio_device_key:
+                current = device.description()
+                break
+        menu.setTitle(f"音声出力先: {current}")
+        choices = [("", "システム既定")]
+        choices += [(key, device.description()) for key, device in devices]
+        for key, label in choices:
+            act = QAction(label, menu)
+            act.setCheckable(True)
+            act.setChecked(key == self._audio_device_key)
+            act.setData(key)
+            act.triggered.connect(
+                lambda _checked=False, k=key: self.set_audio_device(k))
+            self._audio_device_group.addAction(act)
+            menu.addAction(act)
+
+    def _on_audio_outputs_changed(self) -> None:
+        # 選択中のデバイスが抜けたら既定へ戻す (消えた出力先へ送り続けない)。
+        if self._audio_device_key:
+            devices = {
+                audio_device_key(d) for d in QMediaDevices.audioOutputs()
+                if not d.isNull()
+            }
+            if self._audio_device_key not in devices:
+                self._audio_device_key = ""
+                self.audio.setDevice(QAudioDevice())
+        self._refresh_audio_device_menu()
+
+    def set_audio_device(self, key: str) -> None:
+        """出力先を切り替える。未知の ID はシステム既定にフォールバック。"""
+        if not isinstance(key, str):
+            key = ""
+        if key not in self._audio_devices:
+            key = ""
+        self._audio_device_key = key
+        device = self._audio_devices.get(key)
+        try:
+            self.audio.setDevice(device if device is not None else QAudioDevice())
+        except Exception:
+            pass
+        self._refresh_audio_device_menu()
+
     @Slot(int)
     def change_volume(self, value: int) -> None:
         self.audio.setVolume(value / 100.0)
@@ -2470,10 +2768,14 @@ class PlayerWindow(QMainWindow):
     def exit_fullscreen(self) -> None:
         if self._is_fullscreen:
             self._is_fullscreen = False
+            was_maximized = self._fs_maximized
             self._fs_rect = None
             self._fs_timer.stop()
             self._show_fs_controls()
-            self.showNormal()
+            if was_maximized:
+                self.showMaximized()
+            else:
+                self.showNormal()
             self.menuBar().show()
             if self._dock_visible_before_fs:
                 self.pl_dock.show()
@@ -2653,9 +2955,13 @@ class PlayerWindow(QMainWindow):
     def on_media_status(self, status: QMediaPlayer.MediaStatus) -> None:
         if status == QMediaPlayer.MediaStatus.LoadedMedia:
             # 新しいソースが読み込めた時点で保持フレームを捨てる。直前に
-            # 開いていた動画のフレームが遅れて届いても、前の映像を保存しない。
-            self._last_frame = None
-            self._last_image = None
+            # 開いていた動画のフレームが遅れて届いても保存しない。
+            # シークでも LoadedMedia が出るため、新しいソースのときだけ実行する。
+            if self._frame_source_pending:
+                self._frame_source_pending = False
+                self._last_frame = None
+                self._last_image = None
+                self._image_frame = None
         elif status == QMediaPlayer.MediaStatus.EndOfMedia:
             # 終了時は先頭に戻して停止表示にする (自動リピートはしない)。
             # player.stop() は使わない (_do_stop と同じ理由)。
@@ -2665,7 +2971,10 @@ class PlayerWindow(QMainWindow):
         elif status == QMediaPlayer.MediaStatus.InvalidMedia:
             if not self._suppress_error_box:
                 self._suppress_error_box = True
-                QMessageBox.warning(self, "再生エラー", "このファイルは再生できません。対応形式か確認してください。")
+                gen = self._media_gen
+                QTimer.singleShot(
+                    0, lambda g=gen: self._show_deferred_error(
+                        g, "再生エラー", "このファイルは再生できません。対応形式か確認してください。"))
 
     def _apply_eos(self, gen: int) -> None:
         if gen != self._media_gen:
@@ -2677,7 +2986,9 @@ class PlayerWindow(QMainWindow):
         if self.ab_active():
             try:
                 self.player.setPosition(self._ab_a)
-                self.player.play()
+                # 一時停止中に終端へ達した場合は位置だけ戻し、勝手に再生しない。
+                if self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
+                    self.player.play()
             except Exception:
                 pass
             self.seek.setValue(self._ab_a)
@@ -2689,16 +3000,26 @@ class PlayerWindow(QMainWindow):
         self._do_stop()
         self.time_label.setText(f"00:00 / {format_ms(self.player.duration())} (終了)")
 
+    def _show_deferred_error(self, gen: int, title: str, text: str) -> None:
+        """再生シグナル内でのモーダル表示を避け、次のイベントで表示する。"""
+        if gen != self._media_gen or not self._suppress_error_box:
+            return
+        self._suppress_error_box = False
+        QMessageBox.warning(self, title, text)
+
     @Slot()
     def on_error(self) -> None:
         err = self.player.error()
         if err == QMediaPlayer.Error.NoError:
+            self._suppress_error_box = False
             return
         msg = self.player.errorString() or "不明な再生エラー"
         # InvalidMedia と重複表示しない
         if not self._suppress_error_box:
             self._suppress_error_box = True
-            QMessageBox.warning(self, "再生エラー", f"読み込みに失敗しました:\n{msg}")
+            gen = self._media_gen
+            QTimer.singleShot(0, lambda g=gen, m=msg: self._show_deferred_error(
+                g, "再生エラー", f"読み込みに失敗しました:\n{m}"))
 
 
 def _run_selftest(argv: list[str]) -> int:
@@ -2715,8 +3036,18 @@ def _run_selftest(argv: list[str]) -> int:
     out_path = None
     try:
         i = argv.index("--selftest")
-        if i + 1 < len(argv):
-            video = argv[i + 1]
+        skip_next = False
+        for token in argv[i + 1:]:
+            if skip_next:
+                skip_next = False
+                continue
+            if token == "--selftest-out":
+                skip_next = True
+                continue
+            if token.startswith("--"):
+                continue
+            video = token
+            break
     except ValueError:
         pass
     if "--selftest-out" in argv:
@@ -2768,6 +3099,8 @@ def main(argv: list[str] | None = None) -> int:
     w = PlayerWindow()
     w.restore_session()
     w.show()
+    if not w._hint_seen:
+        QTimer.singleShot(300, w.maybe_show_first_hint)
     # 起動引数で動画指定があれば自動オープン (検証用)
     if len(args) > 1 and os.path.isfile(args[1]):
         w.load(args[1])

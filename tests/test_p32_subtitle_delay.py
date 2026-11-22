@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TMP = os.path.join(BASE, "tmp_p32")
 SESSION = os.path.join(TMP, "session.json")
-RESUME = os.path.join(BASE, "resume.json")
+RESUME = os.environ.get("MPLAYER_RESUME_FILE", os.path.join(BASE, "resume.json"))
 
 os.makedirs(TMP, exist_ok=True)
 os.environ["MPLAYER_SESSION_FILE"] = SESSION
@@ -323,9 +323,9 @@ def main():
     w3._apply_session({"subtitle_delay_ms": 700})
     check("正しい値は反映される", w3.sub_delay_ms() == 700, str(w3.sub_delay_ms()))
 
-    # --- 別の動画を開いても値は残る (全動画共通の設定) ---
+    # --- 別の動画を開くと 0 秒から (動画ごとの設定) ---
     w3.load(CLIP2)
-    check("別の動画を開いても残る", w3.sub_delay_ms() == 700,
+    check("別の動画は 0 秒から", w3.sub_delay_ms() == 0,
           str(w3.sub_delay_ms()))
 
     # --- 他の操作を壊さない ---

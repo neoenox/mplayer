@@ -19,6 +19,7 @@ if not os.path.exists(VENV_PY):
 LOGDIR = os.path.join(BASE, "test_logs")
 
 STAGES = [
+    ("runner_validation", "tests/test_runner_validation.py", 30),
     ("p6_controls", "tests/test_p6_controls.py", 60),
     ("p0_decode", "tests/test_p0_decode.py", 150),
     ("p1a_open_play", "tests/test_p1a_open_play.py", 100),
@@ -59,6 +60,8 @@ STAGES = [
     ("p34_shuffle_repeat", "tests/test_p34_shuffle_repeat.py", 180),
     ("p35_window_state", "tests/test_p35_window_state.py", 180),
     ("p36_recent_files", "tests/test_p36_recent_files.py", 180),
+    ("p37_subtitle_delay_files", "tests/test_p37_subtitle_delay_files.py", 180),
+    ("p38_audio_device", "tests/test_p38_audio_device.py", 90),
 ]
 
 
@@ -121,17 +124,27 @@ def main():
     ap.add_argument("--python", default=None, help="使用するPython (既定: MPLAYER_PYTHONか.venv)")
     ap.add_argument("stages", nargs="*", help="実行するステージ名 (省略時は全部)")
     args = ap.parse_args()
+    valid_stages = {alias for name, rel, _ in STAGES for alias in (name, rel)}
+    unknown_stages = sorted(set(args.stages) - valid_stages)
+    if unknown_stages:
+        ap.error(f"unknown stage(s): {', '.join(unknown_stages)}")
     global VENV_PY
     if args.python:
         if os.path.exists(args.python):
             VENV_PY = args.python
         else:
             print(f"warn: --python not found ({args.python}); using {sys.executable}", flush=True)
+            VENV_PY = sys.executable
 
     os.makedirs(LOGDIR, exist_ok=True)
     total_p = total_f = total_s = 0
     rows = []
     wanted = set(args.stages)
+    valid = {n for n, _, _ in STAGES} | {r for _, r, _ in STAGES}
+    unknown = sorted(wanted - valid)
+    if unknown:
+        print(f"error: unknown stage(s): {', '.join(unknown)}", flush=True)
+        return 2
     for name, rel, timeout in STAGES:
         if wanted and name not in wanted and rel not in wanted:
             continue
@@ -139,12 +152,14 @@ def main():
         env = dict(os.environ, MPLAYER_DUMP_SECS="30",
                    MPLAYER_DUMP_FILE=os.path.join(LOGDIR, f"{name}.pydump.txt"),
                    MPLAYER_SESSION_FILE=os.path.join(LOGDIR, f"{name}.session.json"),
+                   MPLAYER_RESUME_FILE=os.path.join(LOGDIR, f"{name}.resume.json"),
                    PYTHONUTF8="1",
                    QT_LOGGING_RULES="*.debug=false;qt.multimedia.*.info=false")
-        try:
-            os.remove(env["MPLAYER_SESSION_FILE"])
-        except OSError:
-            pass
+        for key in ("MPLAYER_SESSION_FILE", "MPLAYER_RESUME_FILE"):
+            try:
+                os.remove(env[key])
+            except OSError:
+                pass
         try:
             cp = subprocess.run([VENV_PY, "-u", rel], cwd=BASE, capture_output=True,
                                 text=True, timeout=timeout, errors="replace",
@@ -171,8 +186,14 @@ def main():
         total_p += p
         total_f += fl
         total_s += sk
-        ok = status == "EXIT" and code == 0 and fl == 0
-        rows.append((name, "PASS" if ok else ("FAIL" if fl else status), p, fl, sk))
+        # 検証件数0のSKIPのみステージはPASSにしない (未検証を成功と報告しない)。
+        if status == "EXIT" and code == 0 and fl == 0 and p > 0:
+            result = "PASS"
+        elif p == 0 and fl == 0 and sk > 0:
+            result = "SKIP"
+        else:
+            result = "FAIL" if fl else status
+        rows.append((name, result, p, fl, sk))
         print(f"\r{name}: {rows[-1][1]} (pass={p} fail={fl} skip={sk})", flush=True)
 
     summary = ["# mplayer test summary", "", "## env", env_info(), "", "## stages"]
@@ -187,7 +208,7 @@ def main():
         print(f"  {name}: {res} ({p}/{p + fl + sk})", flush=True)
     print(f"TOTAL: {total_p} passed, {total_f} failed, {total_s} skipped"
           f"  (logs: test_logs/)", flush=True)
-    return 1 if total_f or any(r[1] not in ("PASS",) for r in rows) else 0
+    return 1 if not rows or total_f or any(r[1] not in ("PASS", "SKIP") for r in rows) else 0
 
 
 if __name__ == "__main__":

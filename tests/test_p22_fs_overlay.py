@@ -8,12 +8,13 @@ from helpers import check, finish, make_app, patch_message_boxes, silence, wait_
 from PySide6.QtCore import QEvent, QEventLoop, QPoint, QPointF, Qt, QTimer
 from PySide6.QtGui import QMouseEvent
 from PySide6.QtWidgets import QApplication
+from PySide6.QtTest import QTest
 
 from main import PlayerWindow
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 VIDEO = os.path.join(BASE, "test_640x360.mp4")
-RESUME = os.path.join(BASE, "resume.json")
+RESUME = os.environ.get("MPLAYER_RESUME_FILE", os.path.join(BASE, "resume.json"))
 
 
 def pump(ms=0):
@@ -97,8 +98,9 @@ def main():
     pump(30)
     check("全画面切替後もエラーでない", w.player.error().name == "NoError",
           w.player.error().name)
-    check("Esc で全画面解除できる (exit相当)",
-          (w.exit_fullscreen() or (not w._is_fullscreen)),
+    QTest.keyClick(w, Qt.Key.Key_Escape)
+    pump(30)
+    check("Esc で全画面解除できる", not w._is_fullscreen,
           str(w._is_fullscreen))
     check("解除後も操作系が見える", w.controls.isVisible())
 
