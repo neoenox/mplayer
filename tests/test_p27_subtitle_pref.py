@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TMP = os.path.join(BASE, "tmp_p27")
 SESSION = os.path.join(TMP, "session.json")
-RESUME = os.path.join(BASE, "resume.json")
+RESUME = os.environ.get("MPLAYER_RESUME_FILE", os.path.join(BASE, "resume.json"))
 
 os.makedirs(TMP, exist_ok=True)
 os.environ["MPLAYER_SESSION_FILE"] = SESSION
@@ -94,7 +94,7 @@ def main():
     check("好み OFF なら表示しない", w2._subs_enabled is False)
     check("ボタン表示は ON にならない", w2.subs_btn.text() == "字幕",
           w2.subs_btn.text())
-    check("字幕ラベルは隠れたまま", w2.subtitle_label.isHidden())
+    check("好み OFF でもボタンのチェックは外れたまま", w2.subs_btn.isChecked() is False)
 
     # 明示的に ON にすれば再読込なしで表示
     w2.subs_btn.setChecked(True)

@@ -15,7 +15,7 @@ from main import (DROP_MAX_FILES, PlayerWindow, collect_video_files,
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SAMPLE = os.path.join(BASE, "test_640x360.mp4")
-RESUME = os.path.join(BASE, "resume.json")
+RESUME = os.environ.get("MPLAYER_RESUME_FILE", os.path.join(BASE, "resume.json"))
 
 
 def drop(w, paths):
@@ -88,8 +88,8 @@ def main():
     check("フォルダ: 先頭が再生される",
           w._current_path == os.path.abspath(os.path.join(tmp, "a.mp4")),
           str(w._current_path))
-    check("フォルダ: 提案アクションを受理",
-          ev.isAccepted() or ev.proposedAction() == Qt.DropAction.CopyAction)
+    check("フォルダ: 提案アクションを受理", ev.isAccepted(),
+          f"accepted={ev.isAccepted()}")
     check("フォルダ: プレイリストが表示される", not w.pl_dock.isHidden())
     rows = [w.playlist.item(i).data(Qt.ItemDataRole.UserRole)
             for i in range(w.playlist.count())]

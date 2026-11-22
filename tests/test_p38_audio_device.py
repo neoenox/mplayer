@@ -8,6 +8,7 @@ import json
 import os
 import shutil
 import sys
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -23,6 +24,7 @@ os.environ["MPLAYER_SESSION_FILE"] = SESSION
 from helpers import check, finish, make_app, patch_message_boxes, silence  # noqa: E402
 
 from PySide6.QtMultimedia import QAudioDevice, QMediaDevices  # noqa: E402
+from PySide6.QtGui import QAction
 
 from main import HELP_NOTES, PlayerWindow, audio_device_key  # noqa: E402
 
@@ -62,6 +64,12 @@ def main():
           next(a for a in w._audio_device_menu.actions()
                if a.data() == "").isChecked())
     check("null device key is empty", audio_device_key(QAudioDevice()) == "")
+    before_actions = len(w.findChildren(QAction))
+    for _ in range(3):
+        w._refresh_audio_device_menu()
+    check("menu refresh does not leak actions",
+          len(w.findChildren(QAction)) == before_actions,
+          f"{before_actions} -> {len(w.findChildren(QAction))}")
 
     # メニュー操作で切り替わる (API 直接呼び出しだけではなく UI 配線も確認)。
     act = next(a for a in w._audio_device_menu.actions() if a.data() == key)
@@ -70,7 +78,9 @@ def main():
           f"got={audio_device_key(w.audio.device())}")
     check("menu shows chosen device", label in w._audio_device_menu.title(),
           f"title={w._audio_device_menu.title()!r}")
-    check("chosen action checked", act.isChecked())
+    check("chosen action checked",
+          next(a for a in w._audio_device_menu.actions()
+               if a.data() == key).isChecked())
     check("help explains device menu", any("音声出力先" in n for n in HELP_NOTES))
 
     w._save_session()
@@ -86,6 +96,16 @@ def main():
     check("restored action checked",
           next(a for a in w2._audio_device_menu.actions()
                if a.data() == key).isChecked())
+    # 選択中のデバイスが抜かれた場合も既定へ戻る (hotplug 経路)。
+    w2.set_audio_device(key)
+    with mock.patch.object(QMediaDevices, "audioOutputs", staticmethod(lambda: [])):
+        w2._on_audio_outputs_changed()
+    check("removed device resets to default", w2._audio_device_key == "")
+    check("removed device falls back to system default",
+          audio_device_key(w2.audio.device())
+          == audio_device_key(QMediaDevices.defaultAudioOutput()),
+          f"got={audio_device_key(w2.audio.device())}")
+    check("menu back to default only", len(w2._audio_device_menu.actions()) == 1)
 
     # 未知の ID / 不正な型は既定へ戻す。
     w2.set_audio_device("00" * 32)

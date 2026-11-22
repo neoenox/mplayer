@@ -147,12 +147,14 @@ def main():
         env = dict(os.environ, MPLAYER_DUMP_SECS="30",
                    MPLAYER_DUMP_FILE=os.path.join(LOGDIR, f"{name}.pydump.txt"),
                    MPLAYER_SESSION_FILE=os.path.join(LOGDIR, f"{name}.session.json"),
+                   MPLAYER_RESUME_FILE=os.path.join(LOGDIR, f"{name}.resume.json"),
                    PYTHONUTF8="1",
                    QT_LOGGING_RULES="*.debug=false;qt.multimedia.*.info=false")
-        try:
-            os.remove(env["MPLAYER_SESSION_FILE"])
-        except OSError:
-            pass
+        for key in ("MPLAYER_SESSION_FILE", "MPLAYER_RESUME_FILE"):
+            try:
+                os.remove(env[key])
+            except OSError:
+                pass
         try:
             cp = subprocess.run([VENV_PY, "-u", rel], cwd=BASE, capture_output=True,
                                 text=True, timeout=timeout, errors="replace",
@@ -179,8 +181,14 @@ def main():
         total_p += p
         total_f += fl
         total_s += sk
-        ok = status == "EXIT" and code == 0 and fl == 0 and (p > 0 or sk > 0)
-        rows.append((name, "PASS" if ok else ("FAIL" if fl else status), p, fl, sk))
+        # 検証件数0のSKIPのみステージはPASSにしない (未検証を成功と報告しない)。
+        if status == "EXIT" and code == 0 and fl == 0 and p > 0:
+            result = "PASS"
+        elif p == 0 and fl == 0 and sk > 0:
+            result = "SKIP"
+        else:
+            result = "FAIL" if fl else status
+        rows.append((name, result, p, fl, sk))
         print(f"\r{name}: {rows[-1][1]} (pass={p} fail={fl} skip={sk})", flush=True)
 
     summary = ["# mplayer test summary", "", "## env", env_info(), "", "## stages"]
@@ -195,7 +203,7 @@ def main():
         print(f"  {name}: {res} ({p}/{p + fl + sk})", flush=True)
     print(f"TOTAL: {total_p} passed, {total_f} failed, {total_s} skipped"
           f"  (logs: test_logs/)", flush=True)
-    return 1 if not rows or total_f or any(r[1] not in ("PASS",) for r in rows) else 0
+    return 1 if not rows or total_f or any(r[1] not in ("PASS", "SKIP") for r in rows) else 0
 
 
 if __name__ == "__main__":

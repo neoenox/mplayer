@@ -24,5 +24,10 @@ if errorlevel 1 (
   exit /b 1
 )
 
-for %%f in ("%APP_DIR%dist\installer\mplayer-setup-*.exe") do echo installer: OK -^> %%f
+if exist "%APP_DIR%dist\installer\mplayer-setup-*.exe" (
+  for %%f in ("%APP_DIR%dist\installer\mplayer-setup-*.exe") do echo installer: OK -^> %%f
+) else (
+  echo ERROR: installer exe was not found
+  exit /b 1
+)
 endlocal

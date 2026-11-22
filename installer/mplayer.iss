@@ -33,7 +33,7 @@ WizardStyle=modern
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=admin
-PrivilegesRequiredOverridesAllowed=dialog
+; 非管理者インストールを許可すると HKLM 固定の関連付け登録が失敗するため無効化
 MinVersion=10.0
 
 [Languages]
