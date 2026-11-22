@@ -48,6 +48,9 @@ def main():
     tips = {a.objectName(): a.toolTip()
             for a in w.findChildren(QAction) if a.objectName()}
     check("複数のアクションにツールチップ", len(tips) >= 20, str(len(tips)))
+    check("fullscreen identifier is unique",
+          len([a for a in w.findChildren(QAction)
+               if a.objectName() == "fullscreen"]) == 1)
     check("非表示アクション (Space) にもツールチップ", "Space" in tips.get("playpause", ""),
           tips.get("playpause", ""))
     check("テキスト付きアクションにキー付きツールチップ",

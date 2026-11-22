@@ -16,7 +16,7 @@ BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SHORT = os.path.join(BASE, "test_640x360.mp4")
 OTHER = os.path.join(BASE, "test_silent.mp4")
 LONG = os.path.join(BASE, "test_60s.mp4")
-RESUME = os.path.join(BASE, "resume.json")
+RESUME = os.environ.get("MPLAYER_RESUME_FILE", os.path.join(BASE, "resume.json"))
 
 
 def pump(ms=0):

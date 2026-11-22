@@ -27,8 +27,12 @@ OUT_DIR = os.path.join(ROOT, "dist", "installer")
 
 
 def read_version() -> str:
-    with open(os.path.join(ROOT, "main.py"), encoding="utf-8") as f:
-        return re.search(r'__version__\s*=\s*"([^"]+)"', f.read()).group(1)
+    path = os.path.join(ROOT, "main.py")
+    with open(path, encoding="utf-8") as f:
+        match = re.search(r'__version__\s*=\s*"([^"]+)"', f.read())
+    if not match:
+        raise RuntimeError(f"__version__ not found in {path}")
+    return match.group(1)
 
 
 def find_iscc() -> str | None:
@@ -47,10 +51,16 @@ def find_iscc() -> str | None:
 
 
 def main() -> int:
-    if not os.path.isfile(os.path.join(DIST_APP, "mplayer.exe")):
-        print(f"error: {DIST_APP} に exe がありません。先に exe をビルドしてください。",
+    app_exe = os.path.join(DIST_APP, "mplayer.exe")
+    source = os.path.join(ROOT, "main.py")
+    if not os.path.isfile(app_exe):
+        print(f"error: {app_exe} がありません。先に exe をビルドしてください。",
               file=sys.stderr)
         return 2
+    if os.path.getmtime(app_exe) < os.path.getmtime(source):
+        print(f"error: {app_exe} が {source} より古いです。build_exe.bat を再実行してください。",
+              file=sys.stderr)
+        return 5
 
     iscc = find_iscc()
     if not iscc:

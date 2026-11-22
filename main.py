@@ -17,6 +17,7 @@ import os
 import random
 import re
 import sys
+import tempfile
 import time
 
 from PySide6.QtCore import QEvent, QPointF, Qt, QTimer, QUrl, Slot
@@ -185,8 +186,12 @@ def _resource_path(rel: str) -> str:
 
 ICON_PATH = _resource_path(os.path.join("assets", "app.ico"))
 
-# 前回再生位置の保存先 (アプリと同じフォルダ)。上限100件。
-RESUME_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "resume.json")
+# 前回再生位置の保存先 (既定はアプリと同じフォルダ)。上限100件。
+# テスト時は MPLAYER_RESUME_FILE で隔離できる。
+RESUME_FILE = os.environ.get(
+    "MPLAYER_RESUME_FILE",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "resume.json"),
+)
 # セッション (音量/ミュート/速度/プレイリスト) の保存先。
 # テスト時は MPLAYER_SESSION_FILE で隔離できる。
 SESSION_FILE = os.environ.get(
@@ -326,6 +331,24 @@ def format_ms(ms: int) -> str:
     return f"{m:02d}:{s:02d}"
 
 
+def _write_json_atomic(path: str, data, **kwargs) -> None:
+    """JSON を一時ファイル経由で書き換える (途中終了で壊れないように)。"""
+    directory = os.path.dirname(os.path.abspath(path)) or "."
+    fd, tmp = tempfile.mkstemp(prefix=".mplayer-", suffix=".json", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, **kwargs)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
+
+
 # ---------- 1 フレーム送り ----------
 FRAME_STEP_FALLBACK_MS = 33  # fps が取れないときの 1 フレーム (約 30fps)
 
@@ -416,26 +439,43 @@ def _parse_srt_timestamp(text: str) -> int:
     return int(h) * 3600000 + int(m) * 60000 + int(round(float(sec) * 1000))
 
 
+def _is_srt_timestamp_line(line: str) -> bool:
+    """SRT のタイムスタンプ行かどうか (本文の矢印と区別する)。"""
+    return "-->" in line and bool(re.search(r"\d{1,2}:\d{2}", line))
+
+
 def parse_srt(text: str) -> list[tuple[int, int, str]]:
     """SRT文字列を (開始ms, 終了ms, 本文) のリストに変換する。
 
-    不正なブロックは黙って読み飛ばす (破損ファイルでもクラッシュしない)。
+    空行区切りが無い SRT も扱える。不正なブロックは黙って読み飛ばす。
     """
     normalized = text.replace("\r\n", "\n").replace("\r", "\n").lstrip("\ufeff")
+    lines = normalized.split("\n")
     cues: list[tuple[int, int, str]] = []
-    for block in re.split(r"\n[ \t]*\n", normalized):
-        lines = block.split("\n")
-        ts_idx = next((i for i, ln in enumerate(lines) if "-->" in ln), None)
-        if ts_idx is None:
+    i = 0
+    while i < len(lines):
+        if not _is_srt_timestamp_line(lines[i]):
+            i += 1
             continue
-        left, _, right = lines[ts_idx].partition("-->")
+        left, _, right = lines[i].partition("-->")
         try:
             start = _parse_srt_timestamp(left)
             # 末尾に座標等が付く形式 ("... --> 00:00:02,000 X1:..") を許容
             end = _parse_srt_timestamp(right.strip().split()[0])
         except Exception:
+            i += 1
             continue
-        body = "\n".join(ln for ln in lines[ts_idx + 1:]).strip()
+        body_lines: list[str] = []
+        i += 1
+        while i < len(lines) and not _is_srt_timestamp_line(lines[i]):
+            stripped = lines[i].strip()
+            # 次のcueの番号行は本文に含めない
+            if (stripped.isdigit() and i + 1 < len(lines)
+                    and _is_srt_timestamp_line(lines[i + 1])):
+                break
+            body_lines.append(lines[i])
+            i += 1
+        body = "\n".join(body_lines).strip()
         if body:
             cues.append((start, end, body))
     cues.sort(key=lambda c: c[0])
@@ -649,6 +689,7 @@ ACTION_KEYS = {
     "sub_delay_back": "Shift+,", "sub_delay_fwd": "Shift+.",
     "shuffle": "Shift+S", "repeat": "Shift+R",
     "fullscreen": "F / F11", "exit_fullscreen": "Esc", "help": "F1",
+    "fullscreen_f": "F / F11",
 }
 
 FIRST_HINT_TEXT = "F1 でショートカット一覧を開けます。操作はメニューとボタンからもできます。"
@@ -1075,7 +1116,7 @@ class PlayerWindow(QMainWindow):
         self.addAction(right_act)
 
         f_act = QAction(self)
-        f_act.setObjectName("fullscreen")
+        f_act.setObjectName("fullscreen_f")
         f_act.setShortcut(Qt.Key.Key_F)
         f_act.triggered.connect(self.toggle_fullscreen)
         self.addAction(f_act)
@@ -1334,6 +1375,9 @@ class PlayerWindow(QMainWindow):
         # 遅延シークの世代管理。load()ごとに加算し、古いファイル向けの
         # 予約シークが新ファイルへ誤適用されるのを防ぐ (P5)。
         self._media_gen = 0
+        # 新しいソース読込時だけ保持フレームを捨てるための印 (シーク時の
+        # LoadedMedia では捨てない)。
+        self._frame_source_pending = False
         # 予約中のシーク先 (連続キー入力時に最新予約を基準にするため)。
         self._pending_seek = None
         # 再生速度 (QMediaPlayer.setPlaybackRate)。既定1.0。
@@ -1362,6 +1406,7 @@ class PlayerWindow(QMainWindow):
         # メッセージを表示する時間 (ms)。
         self._last_frame = None
         self._last_image = None
+        self._image_frame = None  # _last_image を変換した元フレーム
         self._shot_hide_ms = 3000
         self._shot_timer = QTimer(self)
         self._shot_timer.setSingleShot(True)
@@ -1385,6 +1430,7 @@ class PlayerWindow(QMainWindow):
         self._suppress_error_box = False
         self._media_gen += 1
         self._pending_seek = None
+        self._frame_source_pending = True
         self._current_path = os.path.abspath(path)
         # 「最近使ったファイル」の先頭に置く (同じファイルは 1 つにまとめる)
         self._recent = recent_add(self._recent, self._current_path)
@@ -1401,6 +1447,7 @@ class PlayerWindow(QMainWindow):
         # 保存してしまわないように)。
         self._last_frame = None
         self._last_image = None
+        self._image_frame = None
         self.player.setSource(QUrl.fromLocalFile(path))
         self.play_btn.setEnabled(True)
         self.stop_btn.setEnabled(True)
@@ -1427,8 +1474,7 @@ class PlayerWindow(QMainWindow):
         try:
             while len(self._resume) > RESUME_MAX_ENTRIES:
                 self._resume.pop(next(iter(self._resume)))
-            with open(RESUME_FILE, "w", encoding="utf-8") as f:
-                json.dump(self._resume, f, ensure_ascii=False)
+            _write_json_atomic(RESUME_FILE, self._resume, ensure_ascii=False)
         except Exception:
             pass
 
@@ -1535,8 +1581,7 @@ class PlayerWindow(QMainWindow):
             "hint_seen": bool(self._hint_seen),
         }
         try:
-            with open(SESSION_FILE, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
+            _write_json_atomic(SESSION_FILE, data, ensure_ascii=False, indent=2)
         except Exception:
             pass
 
@@ -1818,7 +1863,7 @@ class PlayerWindow(QMainWindow):
         self._subs_enabled = show
         self._current_sub_path = path if cues else None
         self._sub_used_encoding = used if cues else ""
-        self.subs_btn.setChecked(bool(cues))
+        self.subs_btn.setChecked(show)
         self.subs_btn.setText("字幕 ON" if show else "字幕")
         self.update_subtitle(self.player.position())
         return bool(cues)
@@ -2374,18 +2419,21 @@ class PlayerWindow(QMainWindow):
     def _on_video_frame(self, frame) -> None:
         """表示中のフレームを保持する (スクリーンショット用)。
 
-        再生中はフレームを参照するだけ (コピーしない)。一時停止中は後から
-        変換できなくなる場合に備えて、その場で画像に複製しておく。
-        静止中は届く頻度が低いので、複製の負荷は無視できる。
+        再生中はフレームを参照するだけ (コピーしない)。一時停止中は
+        変換できたフレームを画像として複製し、直近の有効な画像を残す。
+        変換に失敗したフレームで上書きすると、一時停止直後に
+        スクリーンショットが失敗するためである。
         """
         try:
             if frame is None or not frame.isValid():
                 return
             self._last_frame = frame
             if self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
-                self._last_image = None
-            else:
-                self._last_image = self._frame_to_image(frame)
+                return
+            image = self._frame_to_image(frame)
+            if image is not None:
+                self._last_image = image
+                self._image_frame = frame
         except Exception:
             pass
 
@@ -2401,16 +2449,31 @@ class PlayerWindow(QMainWindow):
         return None if image.isNull() else image
 
     def _cache_still_image(self) -> None:
-        """一時停止/停止した時点のフレームを画像として固定する (1 度だけ)。"""
-        if self._last_image is not None or self._last_frame is None:
+        """一時停止/停止した時点のフレームを画像として固定する。"""
+        if self._last_frame is None:
             return
-        self._last_image = self._frame_to_image(self._last_frame)
+        image = self._frame_to_image(self._last_frame)
+        if image is not None:
+            self._last_image = image
+            self._image_frame = self._last_frame
 
     def screenshot_image(self):
-        """現在のフレームを QImage で返す (取得できないときは None)。"""
+        """現在のフレームを優先し、変換できない場合は直近の有効な画像を返す。"""
+        frame = self._last_frame
+        if frame is not None and frame.isValid():
+            # 同じフレームなら同じ QImage を返す (呼ぶたびに別オブジェクトに
+            # ならないようにして、更新待ちが正しく動くようにする)。
+            if self._image_frame is not frame:
+                image = self._frame_to_image(frame)
+                if image is not None:
+                    self._image_frame = frame
+                    self._last_image = image
+            if self._image_frame is frame and self._last_image is not None \
+                    and not self._last_image.isNull():
+                return self._last_image
         if self._last_image is not None and not self._last_image.isNull():
             return self._last_image
-        return self._frame_to_image(self._last_frame)
+        return None
 
     def has_frame(self) -> bool:
         """スクリーンショットに使える映像を保持しているか。"""
@@ -2500,9 +2563,8 @@ class PlayerWindow(QMainWindow):
     def _show_shot_message(self, text: str) -> None:
         self.shot_label.setText(text)
         self.shot_label.setVisible(True)
-        # 全画面で操作系が隠れているときは、メッセージが見えるように出す。
-        # 操作系を隠すタイマーが先に切れないよう、長い方に合わせる。
-        if self._is_fullscreen and not self.controls.isVisible():
+        # 全画面では、メッセージが消えるまで操作系も表示したままにする。
+        if self._is_fullscreen:
             self._show_fs_controls()
             self._fs_timer.start(max(self._fs_hide_ms, self._shot_hide_ms))
         self._shot_timer.start(self._shot_hide_ms)
@@ -2626,7 +2688,7 @@ class PlayerWindow(QMainWindow):
         choices = [("", "システム既定")]
         choices += [(key, device.description()) for key, device in devices]
         for key, label in choices:
-            act = QAction(label, self)
+            act = QAction(label, menu)
             act.setCheckable(True)
             act.setChecked(key == self._audio_device_key)
             act.setData(key)
@@ -2893,9 +2955,13 @@ class PlayerWindow(QMainWindow):
     def on_media_status(self, status: QMediaPlayer.MediaStatus) -> None:
         if status == QMediaPlayer.MediaStatus.LoadedMedia:
             # 新しいソースが読み込めた時点で保持フレームを捨てる。直前に
-            # 開いていた動画のフレームが遅れて届いても、前の映像を保存しない。
-            self._last_frame = None
-            self._last_image = None
+            # 開いていた動画のフレームが遅れて届いても保存しない。
+            # シークでも LoadedMedia が出るため、新しいソースのときだけ実行する。
+            if self._frame_source_pending:
+                self._frame_source_pending = False
+                self._last_frame = None
+                self._last_image = None
+                self._image_frame = None
         elif status == QMediaPlayer.MediaStatus.EndOfMedia:
             # 終了時は先頭に戻して停止表示にする (自動リピートはしない)。
             # player.stop() は使わない (_do_stop と同じ理由)。
@@ -2905,7 +2971,10 @@ class PlayerWindow(QMainWindow):
         elif status == QMediaPlayer.MediaStatus.InvalidMedia:
             if not self._suppress_error_box:
                 self._suppress_error_box = True
-                QMessageBox.warning(self, "再生エラー", "このファイルは再生できません。対応形式か確認してください。")
+                gen = self._media_gen
+                QTimer.singleShot(
+                    0, lambda g=gen: self._show_deferred_error(
+                        g, "再生エラー", "このファイルは再生できません。対応形式か確認してください。"))
 
     def _apply_eos(self, gen: int) -> None:
         if gen != self._media_gen:
@@ -2931,6 +3000,13 @@ class PlayerWindow(QMainWindow):
         self._do_stop()
         self.time_label.setText(f"00:00 / {format_ms(self.player.duration())} (終了)")
 
+    def _show_deferred_error(self, gen: int, title: str, text: str) -> None:
+        """再生シグナル内でのモーダル表示を避け、次のイベントで表示する。"""
+        if gen != self._media_gen or not self._suppress_error_box:
+            return
+        self._suppress_error_box = False
+        QMessageBox.warning(self, title, text)
+
     @Slot()
     def on_error(self) -> None:
         err = self.player.error()
@@ -2941,7 +3017,9 @@ class PlayerWindow(QMainWindow):
         # InvalidMedia と重複表示しない
         if not self._suppress_error_box:
             self._suppress_error_box = True
-            QMessageBox.warning(self, "再生エラー", f"読み込みに失敗しました:\n{msg}")
+            gen = self._media_gen
+            QTimer.singleShot(0, lambda g=gen, m=msg: self._show_deferred_error(
+                g, "再生エラー", f"読み込みに失敗しました:\n{m}"))
 
 
 def _run_selftest(argv: list[str]) -> int:

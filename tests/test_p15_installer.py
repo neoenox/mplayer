@@ -34,6 +34,8 @@ def main():
                   "ArchitecturesAllowed=x64compatible",
                   "Japanese.isl", "desktopicon"):
         check(f"iss contains {token!r}", token in text)
+    check("iss does not allow non-admin install",
+          "PrivilegesRequiredOverridesAllowed" not in text)
 
     setups = sorted(glob.glob(os.path.join(BASE, "dist", "installer",
                                            "mplayer-setup-*.exe")))
