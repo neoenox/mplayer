@@ -155,7 +155,7 @@ rem 生成物: dist\installer\mplayer-setup-<version>.exe
 rem ISCC.exe が見つからない場合は INNO_SETUP 環境変数で指定できます
 ```
 
-- インストール先は既定でユーザー領域 (`%LOCALAPPDATA%\Programs`) のため管理者権限不要
+- インストール先は既定で `%ProgramFiles%` (管理者権限が必要)。ファイル関連付けも管理者権限で登録します
 - 日本語 UI、デスクトップショートカット (任意)、インストール直後の起動オプション付き
 
 ## 自動テスト (無音・無人で実行)
@@ -169,7 +169,7 @@ rem 直接実行・特定ステージ・詳細表示:
 .venv\Scripts\python.exe tests\run_all.py -v
 ```
 
-- 全ステージPASSを確認済み (詳細は `test_logs/summary.txt`)
+- 検証したステージは `PASS`、条件不足で飛ばしたステージは `SKIP` と表示します (`SKIP` は検証済みではありません。詳細は `test_logs/summary.txt`)
 - テスト中は音量0にするため音は出ません。製品の既定音量 (80) は変更しません
 - 長時間再生の安定性も検証します (反復シーク・連続再生の自動送り・ウィンドウ生成破棄
   を繰り返した際のハンドル/RSS増加が小さいこと: `p19_stability`)

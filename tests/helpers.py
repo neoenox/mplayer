@@ -206,6 +206,50 @@ def finish(name):
     return 1 if failed else 0
 
 
+def version_strings(path):
+    """Windows EXE の VersionInfo 文字列を読む (読めなければ空辞書)。"""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        ver = ctypes.windll.version
+        ver.GetFileVersionInfoSizeW.argtypes = [wintypes.LPCWSTR,
+                                                ctypes.POINTER(wintypes.DWORD)]
+        ver.GetFileVersionInfoSizeW.restype = wintypes.DWORD
+        ver.GetFileVersionInfoW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD,
+                                            wintypes.DWORD, ctypes.c_void_p]
+        ver.GetFileVersionInfoW.restype = wintypes.BOOL
+        ver.VerQueryValueW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR,
+                                       ctypes.POINTER(ctypes.c_void_p),
+                                       ctypes.POINTER(wintypes.UINT)]
+        ver.VerQueryValueW.restype = wintypes.BOOL
+        size = ver.GetFileVersionInfoSizeW(path, None)
+        if not size:
+            return {}
+        buf = ctypes.create_string_buffer(size)
+        if not ver.GetFileVersionInfoW(path, 0, size, buf):
+            return {}
+        tr = ctypes.c_void_p()
+        length = wintypes.UINT()
+        if not ver.VerQueryValueW(buf, "\\VarFileInfo\\Translation",
+                                  ctypes.byref(tr), ctypes.byref(length)):
+            return {}
+        cp = ctypes.cast(tr, ctypes.POINTER(wintypes.WORD))
+        langid = f"{cp[0]:04x}{cp[1]:04x}"
+        out = {}
+        for key in ("CompanyName", "FileDescription", "FileVersion",
+                    "OriginalFilename", "ProductName", "ProductVersion"):
+            ptr = ctypes.c_void_p()
+            ln = wintypes.UINT()
+            sub = f"\\StringFileInfo\\{langid}\\{key}"
+            if ver.VerQueryValueW(buf, sub, ctypes.byref(ptr),
+                                  ctypes.byref(ln)) and ln.value:
+                out[key] = ctypes.wstring_at(ptr, ln.value - 1).strip()
+        return out
+    except Exception:
+        return {}
+
+
 def _win_handles():
     import ctypes
     from ctypes import wintypes

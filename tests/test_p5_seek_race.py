@@ -68,7 +68,8 @@ def main():
     QTest.qWait(2500)
     pos = w.player.position()
     st = w.player.playbackState()
-    check("B not rewound by stale EOS", pos > 500 or st == QMediaPlayer.PlaybackState.PlayingState,
+    check("B not rewound by stale EOS",
+          pos > 1000 and st == QMediaPlayer.PlaybackState.PlayingState,
           f"pos={pos} state={st}")
 
     # --- 4. 自然終了: 先頭戻し+終了表示 ---

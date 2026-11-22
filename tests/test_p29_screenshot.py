@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TMP = os.path.join(BASE, "tmp_p29")
 SESSION = os.path.join(TMP, "session.json")
-RESUME = os.path.join(BASE, "resume.json")
+RESUME = os.environ.get("MPLAYER_RESUME_FILE", os.path.join(BASE, "resume.json"))
 CLIP = os.path.join(TMP, "clip.mp4")
 CLIP2 = os.path.join(TMP, "clip2.mp4")
 
@@ -98,6 +98,13 @@ def main():
     check("既読がセッションに保存される", saved.get("hint_seen") is True,
           str(saved.get("hint_seen")))
     w._clear_shot_message()
+    w_hint = PlayerWindow()
+    w_hint.restore_session()
+    check("再起動後は既読が復元される", w_hint._hint_seen is True)
+    w_hint.maybe_show_first_hint()
+    check("再起動後は初回ヒントを出さない", w_hint.shot_label.text() == "",
+          w_hint.shot_label.text())
+    w_hint.close()
 
     # --- 動画なし ---
     check("未ロードの既定保存先は無し", w.default_screenshot_path() is None)
@@ -272,7 +279,8 @@ def main():
     check("一時停止中のシークで絵が更新される",
           wait_until(lambda: w.screenshot_image() is not before_img, 5000))
     after_img = w.screenshot_image()
-    check("更新後の画像も空でない", after_img is not None and not after_img.isNull())
+    check("更新後の画像も空でない", after_img is not None and not after_img.isNull(),
+          f"img={after_img!r}")
     check("シーク前とは別の絵になっている", after_img != before_img)
 
     # --- 全画面でも保存できる ---

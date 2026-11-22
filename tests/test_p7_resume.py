@@ -14,7 +14,7 @@ from main import PlayerWindow
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LONG = os.path.join(BASE, "test_60s.mp4")
-RESUME = os.path.join(BASE, "resume.json")
+RESUME = os.environ.get("MPLAYER_RESUME_FILE", os.path.join(BASE, "resume.json"))
 
 
 def main():
@@ -42,6 +42,9 @@ def main():
         check("resume file written", False, str(e))
     got = saved.get(os.path.abspath(LONG), {}).get("pos", -1)
     check("position remembered", 25000 <= got <= 35000, f"pos={got}")
+    check("no temp json left after atomic save",
+          not any(name.startswith(".mplayer-") and name.endswith(".json")
+                  for name in os.listdir(os.path.dirname(RESUME) or ".")))
 
     # 別窓=再起動相当で復元される
     w2 = PlayerWindow()
