@@ -179,7 +179,7 @@ def collect_video_files(path: str, recursive: bool = True,
     return out
 
 APP_NAME = "シンプル動画プレイヤー"
-__version__ = "1.29.0"
+__version__ = "1.30.0"
 
 
 def _resource_path(rel: str) -> str:
@@ -2603,10 +2603,30 @@ class PlayerWindow(QMainWindow):
             self.update_label.hide()
             return
         self.update_label.setText(text)
+        if text.startswith("更新完了"):
+            self.update_label.setStyleSheet(
+                "#update_label { color: #2e7d32; font-weight: bold; }")
+        elif (text.startswith("更新に失敗") or text.startswith("更新の確認に失敗")
+              or text.startswith("更新の適用に失敗")):
+            self.update_label.setStyleSheet(
+                "#update_label { color: #c62828; font-weight: bold; }")
+        else:
+            self.update_label.setStyleSheet("")
         self.update_label.setVisible(True)
         if not state["staged"] and time.time() - state["time"] > 5:
             updater.clear_status()
             self.update_label.hide()
+
+    def show_update_result(self, result: dict) -> None:
+        """更新結果を次回起動時に目立たせて知らせる (モーダルなし)。"""
+        if result.get("ok"):
+            old = str(result.get("from") or "?").lstrip("v")
+            new = str(result.get("to") or "?").lstrip("v")
+            updater.set_status(f"更新完了: v{old} → v{new}", staged=True)
+            QTimer.singleShot(12000, updater.clear_status)
+        else:
+            reason = result.get("reason") or "詳細はログを確認してください"
+            updater.set_status(f"更新に失敗しました: {reason}", staged=True)
 
     # ---------- プロパティ (メディア情報) ----------
     def _meta_text(self, key, formatter, meta=None) -> str:
@@ -3134,11 +3154,16 @@ def main(argv: list[str] | None = None) -> int:
     w = PlayerWindow()
     w.restore_session()
     w.show()
-    if updater.enabled():
+    result = updater.consume_update_result()
+    if result:
+        w.show_update_result(result)
+    auto_on = updater.enabled()
+    if auto_on:
         app_dir = os.path.dirname(sys.executable)
         exe_name = os.path.basename(sys.executable)
         app.aboutToQuit.connect(lambda: updater.finalize(app_dir, exe_name))
         updater.start_background_check(app_dir, __version__)
+    if auto_on or result:
         update_timer = QTimer(w)
         update_timer.timeout.connect(w.refresh_update_label)
         update_timer.start(400)
