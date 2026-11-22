@@ -190,18 +190,35 @@ def _resource_path(rel: str) -> str:
 
 ICON_PATH = _resource_path(os.path.join("assets", "app.ico"))
 
-# 前回再生位置の保存先 (既定はアプリと同じフォルダ)。上限100件。
-# テスト時は MPLAYER_RESUME_FILE で隔離できる。
-RESUME_FILE = os.environ.get(
-    "MPLAYER_RESUME_FILE",
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), "resume.json"),
+# 状態ファイルはユーザー領域に置く (Program Files 配下でも書き込めるように)。
+STATE_DIR = os.environ.get(
+    "MPLAYER_STATE_DIR",
+    os.path.join(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"), "mplayer"),
 )
-# セッション (音量/ミュート/速度/プレイリスト) の保存先。
-# テスト時は MPLAYER_SESSION_FILE で隔離できる。
-SESSION_FILE = os.environ.get(
-    "MPLAYER_SESSION_FILE",
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), "session.json"),
-)
+LEGACY_STATE_DIR = os.path.dirname(os.path.abspath(__file__))
+RESUME_EXPLICIT = "MPLAYER_RESUME_FILE" in os.environ
+SESSION_EXPLICIT = "MPLAYER_SESSION_FILE" in os.environ
+RESUME_FILE = os.environ.get("MPLAYER_RESUME_FILE", os.path.join(STATE_DIR, "resume.json"))
+SESSION_FILE = os.environ.get("MPLAYER_SESSION_FILE", os.path.join(STATE_DIR, "session.json"))
+
+
+def load_state_json(path: str, name: str, explicit: bool) -> dict:
+    """新配置を読み、無ければ旧配置 (exeと同じフォルダ) から移行読み込みする。"""
+    candidates = [path]
+    if not explicit:
+        legacy = os.path.join(LEGACY_STATE_DIR, name)
+        if legacy != path:
+            candidates.append(legacy)
+    for candidate in candidates:
+        if not os.path.isfile(candidate):
+            continue
+        try:
+            with open(candidate, encoding="utf-8") as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
+    return {}
 RESUME_MAX_ENTRIES = 100
 RESUME_MIN_MS = 5000       # 先頭側: これより手前は記憶しない (上限値)
 RESUME_TAIL_MS = 10000     # 終端側: これより終端に近いと記憶しない (上限値)
@@ -338,6 +355,7 @@ def format_ms(ms: int) -> str:
 def _write_json_atomic(path: str, data, **kwargs) -> None:
     """JSON を一時ファイル経由で書き換える (途中終了で壊れないように)。"""
     directory = os.path.dirname(os.path.abspath(path)) or "."
+    os.makedirs(directory, exist_ok=True)
     fd, tmp = tempfile.mkstemp(prefix=".mplayer-", suffix=".json", dir=directory)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -921,6 +939,11 @@ class PlayerWindow(QMainWindow):
         self.shot_label = QLabel("")
         self.shot_label.setObjectName("shot_label")
         self.shot_label.hide()
+        # 自動更新のステータス (ダイアログは出さず、小さく表示するだけ)。
+        self.update_label = QLabel("")
+        self.update_label.setObjectName("update_label")
+        self.update_label.setToolTip("GitHub Releases の自動更新ステータス")
+        self.update_label.hide()
 
         self.fs_btn = QPushButton("全画面")
         self.fs_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -942,6 +965,7 @@ class PlayerWindow(QMainWindow):
         bottom_row.addWidget(self.pl_btn)
         bottom_row.addWidget(self.ab_label)
         bottom_row.addWidget(self.shot_label)
+        bottom_row.addWidget(self.update_label)
         bottom_row.addStretch(1)
         bottom_row.addWidget(self.fs_btn)
 
@@ -1467,12 +1491,7 @@ class PlayerWindow(QMainWindow):
     # ---------- 前回再生位置 ----------
     @staticmethod
     def _load_resume() -> dict:
-        try:
-            with open(RESUME_FILE, encoding="utf-8") as f:
-                data = json.load(f)
-                return data if isinstance(data, dict) else {}
-        except Exception:
-            return {}
+        return load_state_json(RESUME_FILE, "resume.json", RESUME_EXPLICIT)
 
     def _save_resume(self) -> None:
         try:
@@ -1519,12 +1538,7 @@ class PlayerWindow(QMainWindow):
     # ---------- セッション (音量/ミュート/速度/プレイリスト) ----------
     @staticmethod
     def _load_session() -> dict:
-        try:
-            with open(SESSION_FILE, encoding="utf-8") as f:
-                data = json.load(f)
-            return data if isinstance(data, dict) else {}
-        except Exception:
-            return {}
+        return load_state_json(SESSION_FILE, "session.json", SESSION_EXPLICIT)
 
     def _refresh_recent_menu(self) -> None:
         """「最近使ったファイル」メニューを作り直す。"""
@@ -2581,6 +2595,19 @@ class PlayerWindow(QMainWindow):
         self.shot_label.setText("")
         self.shot_label.hide()
 
+    def refresh_update_label(self) -> None:
+        """自動更新の状態を小さなラベルに反映する (モーダルは出さない)。"""
+        state = updater.status()
+        text = state["text"]
+        if not text:
+            self.update_label.hide()
+            return
+        self.update_label.setText(text)
+        self.update_label.setVisible(True)
+        if not state["staged"] and time.time() - state["time"] > 5:
+            updater.clear_status()
+            self.update_label.hide()
+
     # ---------- プロパティ (メディア情報) ----------
     def _meta_text(self, key, formatter, meta=None) -> str:
         """メタデータを表示用の文字列にする。
@@ -3112,6 +3139,9 @@ def main(argv: list[str] | None = None) -> int:
         exe_name = os.path.basename(sys.executable)
         app.aboutToQuit.connect(lambda: updater.finalize(app_dir, exe_name))
         updater.start_background_check(app_dir, __version__)
+        update_timer = QTimer(w)
+        update_timer.timeout.connect(w.refresh_update_label)
+        update_timer.start(400)
     if not w._hint_seen:
         QTimer.singleShot(300, w.maybe_show_first_hint)
     # 起動引数で動画指定があれば自動オープン (検証用)

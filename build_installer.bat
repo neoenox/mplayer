@@ -20,7 +20,7 @@ if errorlevel 1 (
 echo installer: compiling Inno Setup script ...
 "%PY%" "%APP_DIR%tools\make_installer.py"
 if errorlevel 1 (
-  echo ERROR: installer build failed. Is Inno Setup 6 installed? (set INNO_SETUP to ISCC.exe)
+  echo ERROR: installer build failed. Is Inno Setup 6 installed? Set INNO_SETUP to ISCC.exe
   exit /b 1
 )
 
@@ -31,3 +31,4 @@ if exist "%APP_DIR%dist\installer\mplayer-setup-*.exe" (
   exit /b 1
 )
 endlocal
+exit /b 0
