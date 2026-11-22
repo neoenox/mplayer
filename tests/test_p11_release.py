@@ -24,9 +24,11 @@ def main():
     check("version is semver", bool(re.fullmatch(r"\d+\.\d+\.\d+", app_main.__version__)),
           f"ver={app_main.__version__}")
     check("app name set", bool(app_main.APP_NAME))
+    check("state dir is user-local",
+          os.path.basename(app_main.STATE_DIR) == "mplayer")
     check("updater disabled in tests", updater.enabled() is False)
     check("version comparison", updater.version_tuple("v1.27.0") == (1, 27, 0)
-          and updater.is_newer("v1.29.0", app_main.__version__))
+          and updater.is_newer("v1.30.0", app_main.__version__))
     check("portable asset detection", updater.find_portable_asset({"assets": [
         {"name": "mplayer-setup-1.28.0.exe", "browser_download_url": "https://x/setup.exe"},
         {"name": "mplayer-windows-v1.28.0.zip", "browser_download_url": "https://x/app.zip"},
@@ -101,11 +103,36 @@ def main():
     check("updater preserves resume.json",
           os.path.isfile(os.path.join(apply_app, "resume.json")))
     shutil.rmtree(apply_base, ignore_errors=True)
+    legacy_dir = tempfile.mkdtemp()
+    fresh_dir = tempfile.mkdtemp()
+    with open(os.path.join(legacy_dir, "resume.json"), "w", encoding="utf-8") as f:
+        json.dump({"legacy": True}, f)
+    old_legacy = app_main.LEGACY_STATE_DIR
+    try:
+        app_main.LEGACY_STATE_DIR = legacy_dir
+        check("legacy state migrated",
+              app_main.load_state_json(os.path.join(fresh_dir, "resume.json"),
+                                       "resume.json", False) == {"legacy": True})
+        check("explicit state path skips legacy",
+              app_main.load_state_json(os.path.join(fresh_dir, "resume.json"),
+                                       "resume.json", True) == {})
+    finally:
+        app_main.LEGACY_STATE_DIR = old_legacy
+    shutil.rmtree(legacy_dir, ignore_errors=True)
+    shutil.rmtree(fresh_dir, ignore_errors=True)
 
     make_app()
     w = app_main.PlayerWindow()
     check("title has version", app_main.__version__ in w.windowTitle(),
           f"title={w.windowTitle()!r}")
+    check("update indicator hidden initially", w.update_label.isHidden())
+    updater.set_status("更新あり · 終了時に適用します", staged=True)
+    w.refresh_update_label()
+    check("update indicator shows update",
+          not w.update_label.isHidden() and "更新あり" in w.update_label.text())
+    updater.clear_status()
+    w.refresh_update_label()
+    check("update indicator hides when cleared", w.update_label.isHidden())
     w.close()
 
     cl = os.path.join(BASE, "CHANGELOG.md")

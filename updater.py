@@ -30,6 +30,7 @@ _TIMEOUT_DOWNLOAD = 120
 
 _PENDING: list[str | None] = [None]
 _LOCK = threading.Lock()
+_STATUS = {"text": "", "staged": False, "time": 0.0}
 
 _POWERSHELL = r"""param([string]$AppDir, [string]$StageDir, [string]$TargetPid, [string]$ExeName)
 $ErrorActionPreference = 'SilentlyContinue'
@@ -83,6 +84,22 @@ def enabled() -> bool:
         return False
     return bool(getattr(sys, "frozen", False)) or \
         os.environ.get("MPLAYER_AUTOUPDATE") == "1"
+
+
+def status() -> dict:
+    """UI が表示する更新ステータスのスナップショット。"""
+    with _LOCK:
+        return dict(_STATUS)
+
+
+def set_status(text: str, staged: bool = False) -> None:
+    with _LOCK:
+        _STATUS.update(text=text, staged=staged, time=time.time())
+
+
+def clear_status() -> None:
+    with _LOCK:
+        _STATUS.update(text="", staged=False, time=0.0)
 
 
 def version_tuple(text) -> tuple[int, ...]:
@@ -203,6 +220,7 @@ def prepare(app_dir: str, current_version: str, urlopen=None) -> str | None:
 def start_background_check(app_dir: str, current_version: str) -> None:
     if not enabled():
         return
+    set_status("更新を確認中…")
 
     def worker() -> None:
         try:
@@ -210,8 +228,12 @@ def start_background_check(app_dir: str, current_version: str) -> None:
             if stage:
                 with _LOCK:
                     _PENDING[0] = stage
+                set_status("更新あり · 終了時に適用します", staged=True)
+            else:
+                set_status("最新版です")
         except Exception as exc:
             log(f"check failed: {exc}")
+            set_status("更新確認に失敗しました")
 
     threading.Thread(target=worker, name="mplayer-updater", daemon=True).start()
 
@@ -243,6 +265,7 @@ def finalize(app_dir: str, exe_name: str = "mplayer.exe") -> None:
         return
     stage = take_pending()
     if stage and os.path.isdir(stage):
+        set_status("更新を適用しています…", staged=True)
         try:
             start_apply(app_dir, stage, exe_name=exe_name)
         except Exception as exc:
