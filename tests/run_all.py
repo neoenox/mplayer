@@ -154,6 +154,7 @@ def main():
                    MPLAYER_SESSION_FILE=os.path.join(LOGDIR, f"{name}.session.json"),
                    MPLAYER_RESUME_FILE=os.path.join(LOGDIR, f"{name}.resume.json"),
                    PYTHONUTF8="1",
+                   MPLAYER_NO_AUTOUPDATE="1",
                    QT_LOGGING_RULES="*.debug=false;qt.multimedia.*.info=false")
         for key in ("MPLAYER_SESSION_FILE", "MPLAYER_RESUME_FILE"):
             try:
