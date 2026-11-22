@@ -102,6 +102,9 @@ def main() -> int:
         _shuffle = False
         _repeat = False
         _recent = []
+        _audio_device_key = None
+        _hint_seen = True
+        _sub_delays = {}
 
         def playlist_paths(self):
             return []
