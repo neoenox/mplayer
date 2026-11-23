@@ -120,6 +120,9 @@ def main():
     check("update marker has versions",
           bool(result_data and result_data.get("from") == "1.28.1"
                and result_data.get("to") == "v1.29.0"), str(result_data))
+    check("apply helper retries rename",
+          "Rename-WithRetry" in updater._POWERSHELL
+          and "Start-Sleep -Milliseconds 1500" in updater._POWERSHELL)
     shutil.rmtree(apply_base, ignore_errors=True)
     legacy_dir = tempfile.mkdtemp()
     fresh_dir = tempfile.mkdtemp()

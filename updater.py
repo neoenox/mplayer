@@ -58,6 +58,15 @@ if (Get-Process -Id $pidToWait -ErrorAction SilentlyContinue) {
     Write-Result $false 'old process still running'
     exit 1
 }
+
+Start-Sleep -Milliseconds 1500
+function Rename-WithRetry([string]$Path, [string]$NewName) {
+    for ($i = 0; $i -lt 20; $i++) {
+        try { Rename-Item -LiteralPath $Path -NewName $NewName -ErrorAction Stop; return }
+        catch { Start-Sleep -Milliseconds 500 }
+    }
+    throw ('could not rename ' + $Path + ' after 10 seconds')
+}
 $parent = Split-Path -Parent $app
 $leaf = Split-Path -Leaf $app
 $backup = Join-Path $parent ('mplayer-backup-' + [guid]::NewGuid().ToString('N'))
@@ -66,8 +75,8 @@ foreach ($name in @('resume.json', 'session.json')) {
     if (Test-Path -LiteralPath $src) { Copy-Item -LiteralPath $src -Destination (Join-Path $stage $name) -Force }
 }
 try {
-    Rename-Item -LiteralPath $app -NewName (Split-Path -Leaf $backup) -ErrorAction Stop
-    Rename-Item -LiteralPath $stage -NewName $leaf -ErrorAction Stop
+    Rename-WithRetry $app (Split-Path -Leaf $backup)
+    Rename-WithRetry $stage $leaf
     Start-Process -FilePath (Join-Path $app $ExeName) -WorkingDirectory $app
     Log 'update applied'
     Write-Result $true ''
