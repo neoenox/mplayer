@@ -211,6 +211,17 @@ QPushButton#btn_play:hover { background: #5594ff; }
 QPushButton#btn_play:disabled { background: #25365a; color: #8b9ab8; border-color: #2b3d63; }
 QPushButton#btn_fullscreen { min-width: 70px; }
 QFrame#control_separator { color: #303a4b; background: #303a4b; }
+QWidget#update_toast {
+    background: rgba(13, 17, 25, 235);
+    border: 1px solid #3a4658;
+    border-radius: 10px;
+}
+QLabel#update_toast_icon { font-weight: 700; min-width: 14px; }
+QLabel#update_toast_label { color: #e8edf6; font-weight: 600; }
+QPushButton#update_toast_close {
+    background: transparent; border: none; color: #93a3bd;
+    padding: 0; min-height: 0; font-size: 16px;
+}
 QSlider { background: transparent; }
 QSlider::groove:horizontal {
     height: 8px; background: #2b3240; border-radius: 4px;
@@ -964,6 +975,32 @@ class PlayerWindow(QMainWindow):
         self.empty_hint.setAttribute(
             Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         empty_lay.addWidget(self.empty_hint, 0, Qt.AlignmentFlag.AlignCenter)
+        self.empty_open_btn = QPushButton("ファイルを開く", self.video)
+        self.empty_open_btn.setObjectName("btn_empty_open")
+        self.empty_open_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.empty_open_btn.clicked.connect(self.open_file_dialog)
+        self.empty_open_btn.hide()
+
+        # 自動更新の通知は映像上部のトーストに表示する (操作バーは占有しない)。
+        self.update_toast = QWidget(self.video)
+        self.update_toast.setObjectName("update_toast")
+        toast_lay = QHBoxLayout(self.update_toast)
+        toast_lay.setContentsMargins(12, 6, 6, 6)
+        toast_lay.setSpacing(8)
+        self.toast_icon = QLabel("i", self.update_toast)
+        self.toast_icon.setObjectName("update_toast_icon")
+        self.toast_label = QLabel("", self.update_toast)
+        self.toast_label.setObjectName("update_toast_label")
+        self.toast_label.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+        self.toast_close = QPushButton("×", self.update_toast)
+        self.toast_close.setObjectName("update_toast_close")
+        self.toast_close.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.toast_close.setToolTip("通知を閉じる")
+        self.toast_close.clicked.connect(self._dismiss_update_toast)
+        toast_lay.addWidget(self.toast_icon)
+        toast_lay.addWidget(self.toast_label, 1)
+        toast_lay.addWidget(self.toast_close)
+        self.update_toast.hide()
         empty_lay.addStretch(1)
         self._update_empty_state()
         self._layout_empty_hint()
@@ -1070,11 +1107,6 @@ class PlayerWindow(QMainWindow):
         self.shot_label = QLabel("")
         self.shot_label.setObjectName("shot_label")
         self.shot_label.hide()
-        # 自動更新のステータス (ダイアログは出さず、小さく表示するだけ)。
-        self.update_label = QLabel("")
-        self.update_label.setObjectName("update_label")
-        self.update_label.setToolTip("GitHub Releases の自動更新ステータス")
-        self.update_label.hide()
 
         self.fs_btn = QPushButton("全画面")
         self.fs_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -1117,7 +1149,6 @@ class PlayerWindow(QMainWindow):
         bottom_row.addWidget(self.pl_btn)
         bottom_row.addWidget(self.ab_label)
         bottom_row.addWidget(self.shot_label)
-        bottom_row.addWidget(self.update_label)
         bottom_row.addStretch(1)
         bottom_row.addWidget(self.fs_btn)
 
@@ -1535,6 +1566,10 @@ class PlayerWindow(QMainWindow):
         self.help_act.setShortcut(Qt.Key.Key_F1)
         self.help_act.triggered.connect(self.show_shortcuts)
         help_menu.addAction(self.help_act)
+        self.check_update_act = QAction("更新を確認...", self)
+        self.check_update_act.setObjectName("check_update")
+        self.check_update_act.triggered.connect(self.check_for_updates)
+        help_menu.addAction(self.check_update_act)
         help_menu.addSeparator()
         about_act = QAction("バージョン情報", self)
         about_act.triggered.connect(self.show_about)
@@ -1921,14 +1956,22 @@ class PlayerWindow(QMainWindow):
 
     def _update_empty_state(self) -> None:
         """ソース未設定のときだけ案内を表示する。"""
-        self.empty_layer.setVisible(self.player.source().isEmpty())
+        empty = self.player.source().isEmpty()
+        self.empty_layer.setVisible(empty)
+        self.empty_open_btn.setVisible(empty)
 
     def _layout_empty_hint(self) -> None:
         """案内レイヤーを映像領域いっぱいに広げ、中央に配置する。"""
         self.empty_layer.setGeometry(self.video.rect())
+        if self.empty_open_btn.isVisible():
+            x = (self.video.width() - self.empty_open_btn.width()) // 2
+            y = self.video.height() // 2 + 42
+            self.empty_open_btn.move(x, y)
+            self.empty_open_btn.raise_()
 
     def resizeEvent(self, event) -> None:  # noqa: N802
         self._layout_empty_hint()
+        self._layout_update_toast()
         super().resizeEvent(event)
 
 
@@ -2768,26 +2811,34 @@ class PlayerWindow(QMainWindow):
         self.shot_label.hide()
 
     def refresh_update_label(self) -> None:
-        """自動更新の状態を小さなラベルに反映する (モーダルは出さない)。"""
+        """自動更新の状態を映像上部のトーストに反映する。"""
         state = updater.status()
         text = state["text"]
         if not text:
-            self.update_label.hide()
+            self.update_toast.hide()
             return
-        self.update_label.setText(text)
         if text.startswith("更新完了"):
-            self.update_label.setStyleSheet(
-                "#update_label { color: #2e7d32; font-weight: bold; }")
+            icon, color = "✓", "#7ee787"
         elif (text.startswith("更新に失敗") or text.startswith("更新の確認に失敗")
               or text.startswith("更新の適用に失敗")):
-            self.update_label.setStyleSheet(
-                "#update_label { color: #c62828; font-weight: bold; }")
+            icon, color = "!", "#ff7b72"
+        elif "更新あり" in text:
+            icon, color = "↓", "#79c0ff"
+        elif "確認中" in text:
+            icon, color = "…", "#dce6f7"
         else:
-            self.update_label.setStyleSheet("")
-        self.update_label.setVisible(True)
+            icon, color = "i", "#dce6f7"
+        style = (f"QLabel#update_toast_icon, QLabel#update_toast_label "
+                 f"{{ color: {color}; }}")
+        self.toast_icon.setText(icon)
+        self.toast_icon.setStyleSheet(style)
+        self.toast_label.setText(text)
+        self.toast_label.setStyleSheet(style)
+        self.update_toast.setVisible(True)
+        self._layout_update_toast()
         if not state["staged"] and time.time() - state["time"] > 5:
             updater.clear_status()
-            self.update_label.hide()
+            self.update_toast.hide()
 
     def show_update_result(self, result: dict) -> None:
         """更新結果を次回起動時に目立たせて知らせる (モーダルなし)。"""
@@ -2799,6 +2850,26 @@ class PlayerWindow(QMainWindow):
         else:
             reason = result.get("reason") or "詳細はログを確認してください"
             updater.set_status(f"更新に失敗しました: {reason}", staged=True)
+            QTimer.singleShot(20000, updater.clear_status)
+
+    def _dismiss_update_toast(self) -> None:
+        updater.clear_status()
+        self.update_toast.hide()
+
+    def _layout_update_toast(self) -> None:
+        width = min(560, max(260, self.video.width() - 40))
+        x = (self.video.width() - width) // 2
+        self.update_toast.setGeometry(x, 12, width, 42)
+        self.update_toast.raise_()
+
+    def check_for_updates(self) -> None:
+        if not updater.enabled():
+            updater.set_status("自動更新は無効です")
+            return
+        app_dir = os.path.dirname(sys.executable)
+        exe_name = os.path.basename(sys.executable)
+        updater.set_status("更新を確認中…")
+        updater.start_background_check(app_dir, __version__)
 
     # ---------- プロパティ (メディア情報) ----------
     def _meta_text(self, key, formatter, meta=None) -> str:
@@ -3100,9 +3171,14 @@ class PlayerWindow(QMainWindow):
 
     @Slot()
     def show_about(self) -> None:
+        info = updater.last_check()
+        latest = f"最新: {info['tag']}" if info.get("tag") else "最新: 未確認"
+        checked = f"最終確認: {info['time']}" if info.get("time") else "最終確認: 未実施"
+        auto = "" if updater.enabled() else "\n自動更新: 無効 (開発/テスト環境)"
         QMessageBox.about(
             self, "バージョン情報",
-            f"{APP_NAME} v{__version__}\n\n"
+            f"{APP_NAME}\n\n"
+            f"現在: v{__version__}\n{latest}\n{checked}{auto}\n\n"
             "最小限のローカル動画プレイヤー (Windows / PySide6)。\n"
             "再生: PySide6同梱のFFmpegバックエンド。外部FFmpeg不要。")
 
