@@ -4,6 +4,11 @@
 形式は [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に準拠し、
 バージョンは [Semantic Versioning](https://semver.org/lang/ja/) に従います。
 
+## [1.30.2] - 2026-11-23
+
+### Fixed
+- サイレント更新の適用時に、旧プロセス終了直後のディレクトリロックで差し替えが失敗する問題を修正しました
+
 ## [1.30.1] - 2026-11-23
 
 ### Fixed
