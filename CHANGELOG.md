@@ -4,7 +4,7 @@
 形式は [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に準拠し、
 バージョンは [Semantic Versioning](https://semver.org/lang/ja/) に従います。
 
-## [Unreleased]
+## [1.30.1] - 2026-11-23
 
 ### Fixed
 - インストーラーで動画ファイルの関連付けが常に登録されるようにしました
