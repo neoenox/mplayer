@@ -182,7 +182,7 @@ def collect_video_files(path: str, recursive: bool = True,
     return out
 
 APP_NAME = "シンプル動画プレイヤー"
-__version__ = "1.30.0"
+__version__ = "1.30.1"
 
 # ダーク基調の共通スタイル。字幕ラベルは個別にスタイルを上書きする。
 APP_STYLESHEET = """
