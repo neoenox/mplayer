@@ -129,11 +129,14 @@ jobs:
           mkdir -p dist
           cd release/mplayer
           zip -qr ../../dist/mplayer-windows-${GITHUB_REF_NAME}.zip .
+          ZIP="$GITHUB_WORKSPACE/dist/mplayer-windows-${GITHUB_REF_NAME}.zip"
+          sha256sum "$ZIP" | awk '{print $1}' > "$ZIP.sha256"
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
           files: |
             dist/mplayer-windows-${{ github.ref_name }}.zip
+            dist/mplayer-windows-${{ github.ref_name }}.zip.sha256
             release/installer/mplayer-setup-*.exe
           generate_release_notes: true
           draft: false
