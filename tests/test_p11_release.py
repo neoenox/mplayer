@@ -28,6 +28,31 @@ def main():
     check("state dir is user-local",
           os.path.basename(app_main.STATE_DIR) == "mplayer")
     check("updater disabled in tests", updater.enabled() is False)
+    old_no_update = os.environ.pop("MPLAYER_NO_AUTOUPDATE", None)
+    old_auto = os.environ.get("MPLAYER_AUTOUPDATE")
+    os.environ["MPLAYER_AUTOUPDATE"] = "1"
+    old_fetch = updater.fetch_latest
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("offline")
+
+    updater.fetch_latest = boom
+    try:
+        updater.start_background_check(tempfile.mkdtemp(), app_main.__version__)
+        for _ in range(20):
+            if updater.status().get("text") == "":
+                break
+            time.sleep(0.05)
+        check("check failure is silent", updater.status().get("text") == "",
+              str(updater.status()))
+    finally:
+        updater.fetch_latest = old_fetch
+        if old_no_update is not None:
+            os.environ["MPLAYER_NO_AUTOUPDATE"] = old_no_update
+        if old_auto is None:
+            os.environ.pop("MPLAYER_AUTOUPDATE", None)
+        else:
+            os.environ["MPLAYER_AUTOUPDATE"] = old_auto
     check("version comparison", updater.version_tuple("v1.27.0") == (1, 27, 0)
           and updater.is_newer("v1.31.0", app_main.__version__))
     check("portable asset detection", updater.find_portable_asset({"assets": [

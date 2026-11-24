@@ -182,7 +182,7 @@ def collect_video_files(path: str, recursive: bool = True,
     return out
 
 APP_NAME = "シンプル動画プレイヤー"
-__version__ = "1.30.2"
+__version__ = "1.30.3"
 
 # ダーク基調の共通スタイル。字幕ラベルは個別にスタイルを上書きする。
 APP_STYLESHEET = """
@@ -2819,8 +2819,7 @@ class PlayerWindow(QMainWindow):
             return
         if text.startswith("更新完了"):
             icon, color = "✓", "#7ee787"
-        elif (text.startswith("更新に失敗") or text.startswith("更新の確認に失敗")
-              or text.startswith("更新の適用に失敗")):
+        elif (text.startswith("更新に失敗") or text.startswith("更新の適用に失敗")):
             icon, color = "!", "#ff7b72"
         elif "更新あり" in text:
             icon, color = "↓", "#79c0ff"
