@@ -348,7 +348,7 @@ def start_background_check(app_dir: str, current_version: str) -> None:
                 set_status("最新版です")
         except Exception as exc:
             log(f"check failed: {exc}")
-            set_status("更新の確認に失敗しました (詳細はログ)", staged=True)
+            clear_status()
 
     threading.Thread(target=worker, name="mplayer-updater", daemon=True).start()
 
