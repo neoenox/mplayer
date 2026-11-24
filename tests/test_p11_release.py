@@ -1,5 +1,6 @@
 """P11: リリース準備 (バージョン表記・CHANGELOG・CIリリース設定) の検証。"""
 import os
+import hashlib
 import re
 import sys
 import io
@@ -39,10 +40,15 @@ def main():
     with zipfile.ZipFile(buf, "w") as zf:
         zf.writestr("mplayer.exe", b"dummy")
     payload = buf.getvalue()
+    expected_sha = hashlib.sha256(payload).hexdigest()
     release = {
         "tag_name": "v9.9.9",
-        "assets": [{"name": "mplayer-windows-v9.9.9.zip",
-                    "browser_download_url": "https://example.invalid/app.zip"}],
+        "assets": [
+            {"name": "mplayer-windows-v9.9.9.zip",
+             "browser_download_url": "https://example.invalid/app.zip"},
+            {"name": "mplayer-windows-v9.9.9.zip.sha256",
+             "browser_download_url": "https://example.invalid/app.zip.sha256"},
+        ],
     }
 
     class FakeResponse:
@@ -67,6 +73,8 @@ def main():
     def fake_opener(request, timeout=None):
         if "releases/latest" in request.full_url:
             return FakeResponse(json.dumps(release).encode("utf-8"))
+        if request.full_url.endswith(".sha256"):
+            return FakeResponse(expected_sha.encode("ascii"))
         return FakeResponse(payload)
 
     stage = updater.prepare(tmpdir, app_main.__version__, fake_opener)
@@ -76,6 +84,27 @@ def main():
     if stage:
         shutil.rmtree(stage, ignore_errors=True)
     shutil.rmtree(tmpdir, ignore_errors=True)
+    bad_release = {
+        "tag_name": "v9.9.9",
+        "assets": [
+            {"name": "mplayer-windows-v9.9.9.zip",
+             "browser_download_url": "https://example.invalid/app.zip"},
+            {"name": "mplayer-windows-v9.9.9.zip.sha256",
+             "browser_download_url": "https://example.invalid/app.zip.sha256"},
+        ],
+    }
+
+    def bad_opener(request, timeout=None):
+        if "releases/latest" in request.full_url:
+            return FakeResponse(json.dumps(bad_release).encode("utf-8"))
+        if request.full_url.endswith(".sha256"):
+            return FakeResponse(("0" * 64).encode("ascii"))
+        return FakeResponse(payload)
+
+    bad_dir = tempfile.mkdtemp()
+    check("checksum mismatch rejects update",
+          updater.prepare(bad_dir, app_main.__version__, bad_opener) is None)
+    shutil.rmtree(bad_dir, ignore_errors=True)
     # 終了後適用ヘルパーが実際に動くか (短命プロセスのPIDで終了を模擬)。
     apply_base = tempfile.mkdtemp(prefix="mplayer-apply-")
     apply_app = os.path.join(apply_base, "mplayer")
@@ -151,6 +180,11 @@ def main():
               bool(failure and failure.get("ok") is False
                    and failure.get("reason") == "boom"), str(failure))
         check("marker consumed once", updater.consume_update_result() is None)
+        stale_path = updater.update_result_path()
+        with open(stale_path, "w", encoding="utf-8") as f:
+            json.dump({"ok": False, "reason": "old",
+                       "time": "2020-01-01T00:00:00"}, f)
+        check("stale failure marker ignored", updater.consume_update_result() is None)
     finally:
         if old_state_env is None:
             os.environ.pop("MPLAYER_STATE_DIR", None)
@@ -161,26 +195,32 @@ def main():
     w = app_main.PlayerWindow()
     check("title has version", app_main.__version__ in w.windowTitle(),
           f"title={w.windowTitle()!r}")
-    check("update indicator hidden initially", w.update_label.isHidden())
+    check("empty state has open button", not w.empty_open_btn.isHidden())
+    check("manual update check action",
+          w.check_update_act.objectName() == "check_update")
+    check("update toast hidden initially", w.update_toast.isHidden())
     updater.set_status("更新あり · 終了時に適用します", staged=True)
     w.refresh_update_label()
-    check("update indicator shows update",
-          not w.update_label.isHidden() and "更新あり" in w.update_label.text())
+    check("update toast shows update",
+          not w.update_toast.isHidden() and "更新あり" in w.toast_label.text()
+          and w.toast_icon.text() == "↓")
     updater.clear_status()
     w.refresh_update_label()
-    check("update indicator hides when cleared", w.update_label.isHidden())
+    check("update toast hides when cleared", w.update_toast.isHidden())
     w.show_update_result({"ok": True, "from": "1.28.1", "to": "v1.29.0"})
     w.refresh_update_label()
-    check("completion banner shown",
-          not w.update_label.isHidden() and "更新完了" in w.update_label.text(),
-          w.update_label.text())
-    check("completion banner styled", "font-weight: bold" in w.update_label.styleSheet())
+    check("completion toast shown",
+          not w.update_toast.isHidden() and "更新完了" in w.toast_label.text()
+          and w.toast_icon.text() == "✓",
+          w.toast_label.text())
+    check("completion toast styled green", "#7ee787" in w.toast_label.styleSheet(),
+          w.toast_label.styleSheet())
     w.show_update_result({"ok": False, "reason": "boom"})
     w.refresh_update_label()
-    check("failure banner shown", "更新に失敗" in w.update_label.text(),
-          w.update_label.text())
-    check("failure banner styled red", "c62828" in w.update_label.styleSheet(),
-          w.update_label.styleSheet())
+    check("failure toast shown", "更新に失敗" in w.toast_label.text()
+          and w.toast_icon.text() == "!", w.toast_label.text())
+    check("failure toast styled red", "#ff7b72" in w.toast_label.styleSheet(),
+          w.toast_label.styleSheet())
     updater.clear_status()
     w.refresh_update_label()
     w.close()

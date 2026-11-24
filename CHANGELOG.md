@@ -4,6 +4,16 @@
 形式は [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に準拠し、
 バージョンは [Semantic Versioning](https://semver.org/lang/ja/) に従います。
 
+## [Unreleased]
+
+### Added
+- サイレント更新で portable zip の SHA256 チェックサムを検証するようにしました
+- 更新通知を映像上部のトーストに変更し、手動更新チェックと最終確認時刻の表示を追加しました
+- 未読込時の案内に「ファイルを開く」ボタンを追加しました
+
+### Fixed
+- 古い更新結果マーカーが残っていると起動時に「更新に失敗しました」と表示される問題を修正しました
+
 ## [1.30.2] - 2026-11-23
 
 ### Fixed

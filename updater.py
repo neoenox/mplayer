@@ -8,8 +8,10 @@ PowerShell ヘルパーを detached で起動して行う (実行中exeは上書
 何もせずログだけ残す。
 """
 from __future__ import annotations
+from datetime import datetime, timedelta
 
 import json
+import hashlib
 import os
 import re
 import shutil
@@ -25,6 +27,7 @@ RELEASES_API = "https://api.github.com/repos/neoenox/mplayer/releases/latest"
 ASSET_RE = re.compile(r"mplayer-windows-v?[^/\\]+\.zip$", re.IGNORECASE)
 LOG_NAME = "mplayer_autoupdate.log"
 PRESERVE_FILES = ("resume.json", "session.json")
+RESULT_MAX_AGE_SEC = 600
 _TIMEOUT_CHECK = 8
 _TIMEOUT_DOWNLOAD = 120
 
@@ -34,6 +37,7 @@ _STATUS = {"text": "", "staged": False, "time": 0.0}
 _PENDING_VERSION: list[str | None] = [None]
 _LAST_TAG: list[str] = [""]
 _CURRENT_VERSION: list[str] = [""]
+_LAST_CHECK: list[dict] = [{}]
 
 _POWERSHELL = r"""param([string]$AppDir, [string]$StageDir, [string]$TargetPid, [string]$ExeName,
                         [string]$MarkerPath, [string]$FromVersion, [string]$ToVersion)
@@ -127,6 +131,11 @@ def clear_status() -> None:
         _STATUS.update(text="", staged=False, time=0.0)
 
 
+def last_check() -> dict:
+    with _LOCK:
+        return dict(_LAST_CHECK[0])
+
+
 def state_dir() -> str:
     return os.environ.get(
         "MPLAYER_STATE_DIR",
@@ -150,13 +159,18 @@ def record_update_result(ok: bool, from_version: str = "", to_version: str = "",
 
 
 def consume_update_result() -> dict | None:
-    """更新結果を読み取って削除する (一度だけ表示するため)。"""
+    """更新結果を読み取って削除する (古いマーカーは無視する)。"""
     path = update_result_path()
     data = None
     try:
         with open(path, encoding="utf-8-sig") as f:
             value = json.load(f)
-        data = value if isinstance(value, dict) else None
+        if isinstance(value, dict):
+            when = datetime.fromisoformat(str(value.get("time") or ""))
+            if when.tzinfo is None:
+                when = when.astimezone()
+            if datetime.now().astimezone() - when <= timedelta(seconds=RESULT_MAX_AGE_SEC):
+                data = value
     except Exception:
         pass
     try:
@@ -184,6 +198,24 @@ def find_portable_asset(release: dict) -> tuple[str | None, str | None]:
         if url and ASSET_RE.search(name):
             return url, name
     return None, None
+
+
+def find_checksum_asset(release: dict, zip_name: str) -> str | None:
+    suffix = zip_name + ".sha256"
+    for asset in release.get("assets") or []:
+        name = asset.get("name") or ""
+        url = asset.get("browser_download_url")
+        if url and name == suffix:
+            return url
+    return None
+
+
+def sha256_of_file(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def fetch_latest(urlopen=None, timeout: float = _TIMEOUT_CHECK) -> dict:
@@ -246,6 +278,8 @@ def stage_update(zip_path: str, stage_dir: str) -> str:
 def prepare(app_dir: str, current_version: str, urlopen=None) -> str | None:
     """更新があれば zip をダウンロードし、ステージング先を返す。"""
     release = fetch_latest(urlopen)
+    _LAST_CHECK[0] = {"time": time.strftime("%Y-%m-%d %H:%M:%S"),
+                      "tag": release.get("tag_name") or ""}
     tag = release.get("tag_name") or ""
     if not is_newer(tag, current_version):
         log(f"up to date (latest={tag}, current={current_version})")
@@ -254,17 +288,31 @@ def prepare(app_dir: str, current_version: str, urlopen=None) -> str | None:
     if not url:
         log(f"no portable asset in {tag}")
         return None
+    checksum_url = find_checksum_asset(release, name)
+    if not checksum_url:
+        log(f"no SHA256 asset for {name}; aborting update")
+        return None
     parent = os.path.dirname(os.path.abspath(app_dir))
     if not os.access(parent, os.W_OK):
         log(f"skip: {parent} is not writable (silent update needs a portable folder)")
         return None
-
     fd, tmp_zip = tempfile.mkstemp(prefix="mplayer-update-", suffix=".zip")
     os.close(fd)
+    fd_sum, tmp_sum = tempfile.mkstemp(prefix="mplayer-sha-", suffix=".txt")
+    os.close(fd_sum)
     stamp = time.strftime("%Y%m%d-%H%M%S")
     stage = os.path.join(parent, f"mplayer-update-{version_tuple(tag)}-{stamp}-{os.getpid()}")
     try:
+        download(checksum_url, tmp_sum, urlopen)
+        with open(tmp_sum, encoding="utf-8") as f:
+            expected = (f.read().strip().split() or [""])[0].lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", expected):
+            raise RuntimeError(f"invalid SHA256 asset for {name}")
         download(url, tmp_zip, urlopen)
+        actual = sha256_of_file(tmp_zip)
+        if actual != expected:
+            raise RuntimeError(
+                f"SHA256 mismatch for {name}: expected {expected}, got {actual}")
         if not zip_has_app(tmp_zip):
             raise RuntimeError(f"invalid portable zip: {name}")
         stage_update(tmp_zip, stage)
@@ -273,11 +321,11 @@ def prepare(app_dir: str, current_version: str, urlopen=None) -> str | None:
         log(f"prepare failed: {exc}")
         return None
     finally:
-        try:
-            os.remove(tmp_zip)
-        except OSError:
-            pass
-    _LAST_TAG[0] = tag
+        for tmp in (tmp_zip, tmp_sum):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
     log(f"staged {tag} -> {stage}")
     return stage
 
