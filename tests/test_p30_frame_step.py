@@ -60,6 +60,7 @@ def main():
     w.show()
     silence(w)
     w._resume = {}
+    w.set_resume_enabled(True, notify=False)
 
     # --- 構造 (アクション / メニュー) ---
     check("「1 フレーム戻る」のキーは ,",

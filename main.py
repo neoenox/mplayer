@@ -182,7 +182,7 @@ def collect_video_files(path: str, recursive: bool = True,
     return out
 
 APP_NAME = "シンプル動画プレイヤー"
-__version__ = "1.30.3"
+__version__ = "1.30.4"
 
 # ダーク基調の共通スタイル。字幕ラベルは個別にスタイルを上書きする。
 APP_STYLESHEET = """
@@ -905,6 +905,8 @@ class PlayerWindow(QMainWindow):
         self.resize(WINDOW_DEFAULT_W, WINDOW_DEFAULT_H)
         self.setStyleSheet(APP_STYLESHEET)
         self.setAcceptDrops(True)
+        # 続きから再生はオプトイン (既定OFF)。セッションから復元される。
+        self._resume_enabled = False
 
         # --- 再生エンジン ---
         self.player = QMediaPlayer(self)
@@ -1393,6 +1395,13 @@ class PlayerWindow(QMainWindow):
         self._audio_device_menu = play_menu.addMenu("音声出力先")
         self._refresh_audio_device_menu()
         play_menu.addSeparator()
+        self.resume_act = QAction("続きから再生", self)
+        self.resume_act.setCheckable(True)
+        self.resume_act.setChecked(self._resume_enabled)
+        self.resume_act.setToolTip("動画を開いたときに前回の位置から再開する (既定はOFF)")
+        self.resume_act.triggered.connect(self.set_resume_enabled)
+        play_menu.addAction(self.resume_act)
+        play_menu.addSeparator()
         self.ab_a_act = QAction("A-B: A 点を設定", self)
         self.ab_a_act.setObjectName("ab_a")
         self.ab_a_act.setShortcut(Qt.Key.Key_A)
@@ -1658,7 +1667,7 @@ class PlayerWindow(QMainWindow):
         # 字幕の遅延はファイル単位 (前のファイルの値を引きずらない)
         self.set_sub_delay(self._sub_delays.get(recent_key(self._current_path), 0),
                            notify=False)
-        self._restore_pos = self._resume_pos_for(self._current_path)
+        self._restore_pos = self._resume_pos_for(self._current_path) if self._resume_enabled else None
         # 字幕をリセットし、同名 .srt があれば自動で読み込む
         self.clear_subtitles()
         # A-B リピートはファイル単位の設定。別の動画を開いたら解除する。
@@ -1705,8 +1714,22 @@ class PlayerWindow(QMainWindow):
         except Exception:
             return None
 
+    def set_resume_enabled(self, enabled: bool, notify: bool = True) -> None:
+        """続きから再生の ON/OFF。OFFなら未復元・未保存にする。"""
+        self._resume_enabled = bool(enabled)
+        if (hasattr(self, "resume_act")
+                and self.resume_act.isChecked() != self._resume_enabled):
+            self.resume_act.setChecked(self._resume_enabled)
+        if not self._resume_enabled:
+            self._restore_pos = None
+        if notify:
+            self._show_shot_message(
+                f"続きから再生: {'ON' if self._resume_enabled else 'OFF'}")
+
     def _remember_current(self) -> None:
         """現在の再生位置を保存 (先頭・終端付近は対象外)。"""
+        if not self._resume_enabled:
+            return
         try:
             path = self._current_path
             if not path:
@@ -1792,6 +1815,7 @@ class PlayerWindow(QMainWindow):
             # 消えているファイルはここで掃除する (履歴が延び続けないように)
             "recent": recent_prune(self._recent),
             "hint_seen": bool(self._hint_seen),
+            "resume_enabled": bool(self._resume_enabled),
         }
         try:
             atomic_write_json(SESSION_FILE, data, ensure_ascii=False, indent=2)
@@ -1874,6 +1898,9 @@ class PlayerWindow(QMainWindow):
             self._recent = recent_prune(recent)[:RECENT_MAX]
             self._refresh_recent_menu()
         # ウィンドウの位置・サイズ (最大化とパネル表示は show() の後に適用)
+        resume_enabled = s.get("resume_enabled")
+        if isinstance(resume_enabled, bool):
+            self.set_resume_enabled(resume_enabled, notify=False)
         self.apply_window_state(s.get("window"))
 
     def restore_session(self) -> None:
