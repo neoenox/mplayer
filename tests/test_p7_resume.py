@@ -26,6 +26,9 @@ def main():
     w = PlayerWindow()
     w.show()
     silence(w)
+    check("resume off by default", w._resume_enabled is False)
+    check("resume menu off by default", not w.resume_act.isChecked())
+    w.set_resume_enabled(True, notify=False)
     w.load(LONG)
     check("playing", wait_until(
         lambda: w.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState, 10000))
@@ -45,10 +48,13 @@ def main():
     check("no temp json left after atomic save",
           not any(name.startswith(".mplayer-") and name.endswith(".json")
                   for name in os.listdir(os.path.dirname(RESUME) or ".")))
+    w._save_session()
 
     # 別窓=再起動相当で復元される
     w2 = PlayerWindow()
     w2.show()
+    w2.restore_session()
+    check("resume option persisted", w2._resume_enabled is True)
     silence(w2)
     w2.load(LONG)
     check("resumed near 30000", wait_until(lambda: 25000 <= w2.player.position() <= 35000, 12000),
@@ -66,6 +72,7 @@ def main():
     w3 = PlayerWindow()
     w3.show()
     silence(w3)
+    w3.set_resume_enabled(True, notify=False)
     w3.load(LONG)
     QTest.qWait(2500)
     check("starts from 0 after stop", w3.player.position() < 8000, f"pos={w3.player.position()}")
@@ -76,6 +83,7 @@ def main():
     w4 = PlayerWindow()
     w4.show()
     silence(w4)
+    w4.set_resume_enabled(True, notify=False)
     w4.load(LONG)
     QTest.qWait(2500)
     check("out-of-range ignored", w4.player.position() < 8000, f"pos={w4.player.position()}")

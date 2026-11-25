@@ -125,6 +125,7 @@ def main():
     w.show()
     silence(w)
     w._resume = {}
+    w.set_resume_enabled(True, notify=False)
     check("動画を開く", w.load(CLIP))
     check("長さを取得", wait_until(lambda: w.player.duration() > 0, 5000),
           str(w.player.duration()))
@@ -145,6 +146,7 @@ def main():
     w2 = PlayerWindow()
     w2.show()
     silence(w2)
+    w2.set_resume_enabled(True, notify=False)
     check("別窓は記憶を読み込む", w2._resume_pos_for(CLIP_ABS) is not None,
           str(w2._resume))
     check("別窓で開く", w2.load(CLIP))

@@ -86,6 +86,7 @@ def main() -> int:
 
     class _SessionOwner:
         _resume = {}
+        _resume_enabled = False
         vol = _Value(50)
         mute_btn = _Value(False)
         _rates = [1.0]

@@ -4,6 +4,14 @@
 形式は [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に準拠し、
 バージョンは [Semantic Versioning](https://semver.org/lang/ja/) に従います。
 
+## [1.30.4] - 2026-11-25
+
+### Added
+- タグビルドで OV コード署名証明書を使ってインストーラーと exe に署名する CI ステップを追加しました
+
+### Changed
+- 続きから再生をオプトイン設定に変更し、既定をOFFにしました (「再生」メニューからONにします) (issue #59)
+
 ## [1.30.3] - 2026-11-24
 
 ### Added

@@ -263,6 +263,8 @@ def main():
         ctext = open(ci, encoding="utf-8").read()
         check("ci creates release on tags",
               "softprops/action-gh-release" in ctext and "contents: write" in ctext)
+        check("ci signs tagged binaries",
+              "CODE_SIGN_PFX" in ctext and "signtool" in ctext)
 
     return finish("P11release")
 

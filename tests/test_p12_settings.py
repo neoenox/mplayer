@@ -42,6 +42,8 @@ def main():
     check("saved rate", raw.get("rate") == 1.5, f"{raw.get('rate')}")
     check("saved playlist", len(raw.get("playlist", [])) == 2,
           f"{raw.get('playlist')}")
+    check("saved resume disabled default", raw.get("resume_enabled") is False,
+          f"{raw.get('resume_enabled')}")
 
     # --- 復元 ---
     w2 = PlayerWindow()
@@ -51,6 +53,7 @@ def main():
     check("restore volume", w2.vol.value() == 35, f"{w2.vol.value()}")
     check("restore muted", w2.mute_btn.isChecked() is True)
     check("restore rate", w2._rates[w2._rate_idx] == 1.5)
+    check("restore resume disabled default", w2._resume_enabled is False)
     check("restore rate button", w2.speed_btn.text() == "速度 1.5x")
     check("restore playlist count", wait_until(lambda: w2.playlist.count() == 2, 3000),
           f"count={w2.playlist.count()}")
