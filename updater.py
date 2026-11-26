@@ -23,6 +23,7 @@ import time
 import urllib.request
 import zipfile
 
+from state_paths import state_dir
 RELEASES_API = "https://api.github.com/repos/neoenox/mplayer/releases/latest"
 ASSET_RE = re.compile(r"mplayer-windows-v?[^/\\]+\.zip$", re.IGNORECASE)
 LOG_NAME = "mplayer_autoupdate.log"
@@ -136,13 +137,6 @@ def last_check() -> dict:
         return dict(_LAST_CHECK[0])
 
 
-def state_dir() -> str:
-    return os.environ.get(
-        "MPLAYER_STATE_DIR",
-        os.path.join(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"), "mplayer"),
-    )
-
-
 def update_result_path() -> str:
     return os.path.join(state_dir(), "update_result.json")
 
@@ -190,24 +184,24 @@ def is_newer(latest, current) -> bool:
     return version_tuple(latest) > version_tuple(current)
 
 
-def find_portable_asset(release: dict) -> tuple[str | None, str | None]:
-    """latest release から portable zip の URL と名前を取り出す。"""
+def _find_asset(release: dict, matches) -> tuple[str | None, str | None]:
     for asset in release.get("assets") or []:
         name = asset.get("name") or ""
         url = asset.get("browser_download_url")
-        if url and ASSET_RE.search(name):
+        if url and matches(name):
             return url, name
     return None, None
 
 
+def find_portable_asset(release: dict) -> tuple[str | None, str | None]:
+    """latest release から portable zip の URL と名前を取り出す。"""
+    return _find_asset(release, lambda name: bool(ASSET_RE.search(name)))
+
+
 def find_checksum_asset(release: dict, zip_name: str) -> str | None:
     suffix = zip_name + ".sha256"
-    for asset in release.get("assets") or []:
-        name = asset.get("name") or ""
-        url = asset.get("browser_download_url")
-        if url and name == suffix:
-            return url
-    return None
+    url, _ = _find_asset(release, lambda name: name == suffix)
+    return url
 
 
 def sha256_of_file(path: str) -> str:

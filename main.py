@@ -23,6 +23,7 @@ import time
 import updater
 
 from json_persistence import atomic_write_json
+from state_paths import state_dir as _state_dir
 
 from PySide6.QtCore import QEvent, QPointF, Qt, QTimer, QUrl, Slot
 from PySide6.QtGui import (
@@ -111,6 +112,13 @@ def audio_device_key(device: QAudioDevice) -> str:
     return bytes(device.id()).hex()
 
 
+def trim_oldest(mapping: dict, limit: int) -> dict:
+    """上限を超えた分を挿入順の古い方から削除する。"""
+    while len(mapping) > limit:
+        mapping.pop(next(iter(mapping)))
+    return mapping
+
+
 def sanitize_sub_delay_map(value, limit=SUB_DELAY_MAX_ENTRIES) -> dict[str, int]:
     """保存された「ファイル単位の字幕遅延」を検証し、使える分だけ返す。
 
@@ -125,8 +133,7 @@ def sanitize_sub_delay_map(value, limit=SUB_DELAY_MAX_ENTRIES) -> dict[str, int]
     for path, ms in value.items():
         if isinstance(path, str) and isinstance(ms, int) and not isinstance(ms, bool):
             out[recent_key(path)] = clamp_sub_delay(ms)
-    while len(out) > limit:
-        out.pop(next(iter(out)))
+    trim_oldest(out, limit)
     return out
 
 
@@ -143,8 +150,7 @@ def remember_sub_delay(mapping, path, ms: int,
     out.pop(path, None)
     if ms:
         out[path] = clamp_sub_delay(ms)
-    while len(out) > limit:
-        out.pop(next(iter(out)))
+    trim_oldest(out, limit)
     return out
 
 
@@ -283,10 +289,7 @@ def _resource_path(rel: str) -> str:
 ICON_PATH = _resource_path(os.path.join("assets", "app.ico"))
 
 # 状態ファイルはユーザー領域に置く (Program Files 配下でも書き込めるように)。
-STATE_DIR = os.environ.get(
-    "MPLAYER_STATE_DIR",
-    os.path.join(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"), "mplayer"),
-)
+STATE_DIR = _state_dir()
 LEGACY_STATE_DIR = os.path.dirname(os.path.abspath(__file__))
 RESUME_EXPLICIT = "MPLAYER_RESUME_FILE" in os.environ
 SESSION_EXPLICIT = "MPLAYER_SESSION_FILE" in os.environ
@@ -1697,8 +1700,7 @@ class PlayerWindow(QMainWindow):
 
     def _save_resume(self) -> None:
         try:
-            while len(self._resume) > RESUME_MAX_ENTRIES:
-                self._resume.pop(next(iter(self._resume)))
+            trim_oldest(self._resume, RESUME_MAX_ENTRIES)
             atomic_write_json(RESUME_FILE, self._resume, ensure_ascii=False)
         except Exception:
             logging.getLogger(__name__).exception(
@@ -3281,16 +3283,11 @@ class PlayerWindow(QMainWindow):
 
         # 複数 (フォルダ展開含む) はプレイリストに追加し、先頭を再生する。
         self.add_to_playlist(videos)
-        row = self._row_of_path(os.path.abspath(videos[0]))
-        if row >= 0:
+        row = self._row_of(os.path.abspath(videos[0]))
+        if row is not None:
             self.play_index(row)
         event.acceptProposedAction()
 
-    def _row_of_path(self, path: str) -> int:
-        for i in range(self.playlist.count()):
-            if self.playlist.item(i).data(Qt.ItemDataRole.UserRole) == path:
-                return i
-        return -1
 
     # ---------- 再生状態反映 ----------
 
