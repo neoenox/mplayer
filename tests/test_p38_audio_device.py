@@ -107,6 +107,27 @@ def main():
           f"got={audio_device_key(w2.audio.device())}")
     check("menu back to default only", len(w2._audio_device_menu.actions()) == 1)
 
+    # OS の既定出力が変わると audioOutputsChanged が飛ぶ (Qt の仕様)。
+    # 既定選択中は追従し、固定選択は維持する (issue #62)。
+    w2.set_audio_device("")
+    other = next(
+        (d for d in devices
+         if audio_device_key(d) != audio_device_key(QMediaDevices.defaultAudioOutput())),
+        None)
+    if other is not None:
+        with mock.patch.object(QMediaDevices, "defaultAudioOutput",
+                               staticmethod(lambda: other)):
+            w2._on_audio_outputs_changed()
+            check("default selection follows OS default change",
+                  audio_device_key(w2.audio.device()) == audio_device_key(other),
+                  f"got={audio_device_key(w2.audio.device())}")
+            w2.set_audio_device(key)
+            w2._on_audio_outputs_changed()
+        check("fixed selection ignores OS default change",
+              audio_device_key(w2.audio.device()) == key,
+              f"got={audio_device_key(w2.audio.device())}")
+    w2.set_audio_device("")
+
     # 未知の ID / 不正な型は既定へ戻す。
     w2.set_audio_device("00" * 32)
     check("unknown id falls back", w2._audio_device_key == "")

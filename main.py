@@ -3031,6 +3031,11 @@ class PlayerWindow(QMainWindow):
             if self._audio_device_key not in devices:
                 self._audio_device_key = ""
                 self.audio.setDevice(QAudioDevice())
+        elif audio_device_key(QMediaDevices.defaultAudioOutput()) != \
+                audio_device_key(self.audio.device()):
+            # OS の既定出力の変更でもこのシグナルが飛ぶ (Qt の仕様)。
+            # QAudioOutput は生成時のデバイスを保持するため、追従させる。
+            self.audio.setDevice(QMediaDevices.defaultAudioOutput())
         self._refresh_audio_device_menu()
 
     def set_audio_device(self, key: str) -> None:
