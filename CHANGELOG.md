@@ -4,7 +4,7 @@
 形式は [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に準拠し、
 バージョンは [Semantic Versioning](https://semver.org/lang/ja/) に従います。
 
-## [Unreleased]
+## [1.30.5] - 2026-11-27
 
 ### Fixed
 - OS の既定の音声出力を再生中に切り替えても (例: イヤホンを挿す)、最初に再生を始めた
