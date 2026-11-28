@@ -1,5 +1,6 @@
 """P11: リリース準備 (バージョン表記・CHANGELOG・CIリリース設定) の検証。"""
 import os
+import ast
 import hashlib
 import inspect
 import re
@@ -49,6 +50,22 @@ def main():
     check("AB EOS does not schedule a deferred seek",
           "self.seek.setValue(self._ab_a)" in eos_source
           and "_commit_seek(self._ab_a)" not in eos_source)
+    leaf_modules = ("updater", "state_paths", "json_persistence", "subtitle_text")
+    for name in leaf_modules:
+        tree = ast.parse(open(os.path.join(BASE, f"{name}.py"), encoding="utf-8").read())
+        imports_main = any(
+            (isinstance(node, ast.Import)
+             and any(alias.name == "main" for alias in node.names))
+            or (isinstance(node, ast.ImportFrom) and node.module == "main")
+            for node in ast.walk(tree)
+        )
+        check(f"{name} does not import main", not imports_main)
+    main_tree = ast.parse(open(os.path.join(BASE, "main.py"), encoding="utf-8").read())
+    imported = {alias.name for node in ast.walk(main_tree) if isinstance(node, ast.Import)
+                for alias in node.names}
+    imported |= {node.module for node in ast.walk(main_tree)
+                 if isinstance(node, ast.ImportFrom) and node.module}
+    check("main imports all leaf modules", set(leaf_modules) <= imported)
     check("updater disabled in tests", updater.enabled() is False)
     old_no_update = os.environ.pop("MPLAYER_NO_AUTOUPDATE", None)
     old_auto = os.environ.get("MPLAYER_AUTOUPDATE")

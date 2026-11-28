@@ -50,3 +50,12 @@ Goal: only behavior-preserving deletions and normalization with mechanical guard
 - [x] Independent review found one behavior regression at the A-B loop boundary; fixed before verification.
 - [x] Add p11 authority guard and A-B EOS regression guard.
 - [x] Narrow checks 355 passed / 0 failed / 1 skipped; final full suite 1437 passed / 0 failed / 1 skipped after the A-B EOS fix.
+
+## Round 4 (converged)
+
+- [x] Add AST guard: no leaf module imports `main`; `main` imports all leaf modules.
+- [x] Dead-definition scan: no unused module-level symbols remain in runtime modules.
+- [x] Review remaining tasks: metadata formatter family = low gain; help prose interpolation = product decision; state-validator extraction = mixed concepts / negative deletion-test value; `PlayerWindow` split and version move = rejected.
+- [x] Final verification: full suite 1442 passed / 0 failed / 1 skipped (offscreen subtitle composite).
+
+No further safe high-value entropy reduction remains in this round. Proceed only on new requirements or an explicit product decision about documentation wording.

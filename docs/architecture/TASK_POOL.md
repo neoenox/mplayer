@@ -20,9 +20,10 @@ Ranking = (complexity removed × safety) / churn. Status values: todo, doing, do
 | 14 | Generalize deferred-generation helper | Low | Medium | main | done |
 | 15 | Consolidate seek commit sequence | Low | Medium | main | done |
 | 16 | Extract pure subtitle text helpers | Medium | Medium | main + tests | done |
-| 17 | Extract pure state validators | Medium | High | main + many tests | todo (later round) |
+| 17 | Extract pure state validators | Medium | High | main + many tests | deferred: mixed concepts, negative deletion-test value |
 | 18 | Split `PlayerWindow` into mixins | Negative | High | whole app | rejected (deletion test) |
 | 19 | Move `__version__` out of `main.py` | Negative | High | build/CI | rejected (deletion test) |
+| 20 | AST guard against leaf→main imports | Medium | None | tests | done |
 
 ## Round 1 scope
 
