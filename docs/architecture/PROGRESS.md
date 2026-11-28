@@ -41,3 +41,12 @@ Goal: only behavior-preserving deletions and normalization with mechanical guard
 - [x] Verify env restoration in `p11_release` (already correct; no change needed).
 - [x] Register `p38_atomic_json` next to other p38 stages; rename RESULT label.
 - [x] Round 2 independent review; non-blocking findings fixed.
+
+## Round 3 (complete)
+
+- [x] Extract pure subtitle text helpers into `subtitle_text.py` with re-exports from `main.py`.
+- [x] Add `_defer_current_media()` and migrate generation-guarded callbacks.
+- [x] Add `_commit_seek()` and migrate seek sites; keep A-B EOS on a direct slider update.
+- [x] Independent review found one behavior regression at the A-B loop boundary; fixed before verification.
+- [x] Add p11 authority guard and A-B EOS regression guard.
+- [x] Narrow checks 355 passed / 0 failed / 1 skipped; final full suite 1437 passed / 0 failed / 1 skipped after the A-B EOS fix.

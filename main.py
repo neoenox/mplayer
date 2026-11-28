@@ -16,13 +16,13 @@ import json
 import logging
 import os
 import random
-import re
 import sys
 import time
 import updater
 
 from json_persistence import atomic_write_json
 from state_paths import state_dir as _state_dir
+from subtitle_text import SUB_ENCODINGS, contrast_outline, decode_subtitle_bytes, parse_srt
 
 from PySide6.QtCore import QEvent, QPointF, Qt, QTimer, QUrl, Slot
 from PySide6.QtGui import (
@@ -523,93 +523,9 @@ META_ROWS = [
 ]
 
 
-def _parse_srt_timestamp(text: str) -> int:
-    """'00:00:01,500' / '00:01:02.250' / '01:02' をミリ秒に変換する。"""
-    t = text.strip().replace(",", ".")
-    parts = t.split(":")
-    if len(parts) == 3:
-        h, m, sec = parts
-    elif len(parts) == 2:
-        h, (m, sec) = 0, parts
-    else:
-        raise ValueError(f"bad timestamp: {text!r}")
-    return int(h) * 3600000 + int(m) * 60000 + int(round(float(sec) * 1000))
 
 
-def _is_srt_timestamp_line(line: str) -> bool:
-    """SRT のタイムスタンプ行かどうか (本文の矢印と区別する)。"""
-    return "-->" in line and bool(re.search(r"\d{1,2}:\d{2}", line))
-
-
-def parse_srt(text: str) -> list[tuple[int, int, str]]:
-    """SRT文字列を (開始ms, 終了ms, 本文) のリストに変換する。
-
-    空行区切りが無い SRT も扱える。不正なブロックは黙って読み飛ばす。
-    """
-    normalized = text.replace("\r\n", "\n").replace("\r", "\n").lstrip("\ufeff")
-    lines = normalized.split("\n")
-    cues: list[tuple[int, int, str]] = []
-    i = 0
-    while i < len(lines):
-        if not _is_srt_timestamp_line(lines[i]):
-            i += 1
-            continue
-        left, _, right = lines[i].partition("-->")
-        try:
-            start = _parse_srt_timestamp(left)
-            # 末尾に座標等が付く形式 ("... --> 00:00:02,000 X1:..") を許容
-            end = _parse_srt_timestamp(right.strip().split()[0])
-        except Exception:
-            i += 1
-            continue
-        body_lines: list[str] = []
-        i += 1
-        while i < len(lines) and not _is_srt_timestamp_line(lines[i]):
-            stripped = lines[i].strip()
-            # 次のcueの番号行は本文に含めない
-            if (stripped.isdigit() and i + 1 < len(lines)
-                    and _is_srt_timestamp_line(lines[i + 1])):
-                break
-            body_lines.append(lines[i])
-            i += 1
-        body = "\n".join(body_lines).strip()
-        if body:
-            cues.append((start, end, body))
-    cues.sort(key=lambda c: c[0])
-    return cues
-
-
-# 字幕の文字コード選択肢。auto は BOM/UTF-8/CP932 を順に試す。
-SUB_ENCODINGS = ("auto", "utf-8", "cp932")
 _ENCODING_LABELS = {"auto": "自動", "utf-8": "UTF-8", "cp932": "Shift_JIS"}
-
-
-def decode_subtitle_bytes(data: bytes, encoding: str = "auto") -> tuple[str, str]:
-    """字幕のバイト列をテキストへ復号する。(本文, 採用した文字コード) を返す。
-
-    日本語 SRT は UTF-8 と Shift_JIS(CP932) が混在するため、
-    encoding="auto" では BOM → UTF-8(厳密) → CP932 の順に判定する。
-    明示指定が失敗した場合も自動判定へフォールバックする (化けより安全)。
-    """
-    if encoding in ("utf-8", "cp932"):
-        try:
-            return data.decode(encoding), encoding
-        except (UnicodeDecodeError, LookupError):
-            pass
-
-    if data.startswith(b"\xef\xbb\xbf"):
-        return data.decode("utf-8-sig", errors="replace"), "utf-8"
-    if data.startswith((b"\xff\xfe", b"\xfe\xff")):
-        return data.decode("utf-16", errors="replace"), "utf-16"
-
-    for enc in ("utf-8", "cp932"):
-        try:
-            return data.decode(enc), enc
-        except UnicodeDecodeError:
-            continue
-    return data.decode("utf-8", errors="replace"), "utf-8"
-
-
 # 字幕の配色とフォント。縁取り色は塗り色の輝度から自動で決める (黒地に黒を防ぐ)。
 SUB_COLORS = (
     ("白", (255, 255, 255)),
@@ -628,11 +544,6 @@ SUB_FONTS = (
 )
 
 
-def contrast_outline(rgb) -> tuple[int, int, int]:
-    """塗り色の輝度から縁取り色 (黒 or 白) を選ぶ。"""
-    r, g, b = (int(v) for v in rgb)
-    lum = 0.299 * r + 0.587 * g + 0.114 * b
-    return (0, 0, 0) if lum >= 128 else (255, 255, 255)
 
 
 def subtitle_outline_width(size: int) -> float:
@@ -2481,8 +2392,7 @@ class PlayerWindow(QMainWindow):
     @Slot()
     def stop(self) -> None:
         # 状態遷移はイベント処理の外で実行 (入力ディスパッチ内の再入デッドロック防止)。
-        gen = self._media_gen
-        QTimer.singleShot(0, lambda: self._apply_stop(gen))
+        self._defer_current_media(self._apply_stop)
 
     def _apply_stop(self, gen: int) -> None:
         if gen == self._media_gen:
@@ -2529,10 +2439,20 @@ class PlayerWindow(QMainWindow):
         except Exception:
             pass
 
-    def _post_seek(self, target: int) -> None:
+
+    def _defer_current_media(self, callback) -> None:
+        """現在のメディア世代に紐づけて次のイベントで実行する。"""
         gen = self._media_gen
+        QTimer.singleShot(0, lambda: callback(gen))
+
+    def _commit_seek(self, target: int) -> None:
+        """シークバー表示と実際のシーク要求を同時に更新する。"""
+        self.seek.setValue(target)
+        self._post_seek(target)
+
+    def _post_seek(self, target: int) -> None:
         self._pending_seek = target
-        QTimer.singleShot(0, lambda: self._apply_seek(gen, target))
+        self._defer_current_media(lambda gen: self._apply_seek(gen, target))
 
     def seek_by(self, delta_ms: int) -> None:
         """キーボード用相対シーク。範囲外は丸め、安全な遅延経路を使う。
@@ -2541,8 +2461,7 @@ class PlayerWindow(QMainWindow):
             return
         base = self._pending_seek if self._pending_seek is not None else self.player.position()
         target = min(max(base + delta_ms, 0), self.player.duration())
-        self.seek.setValue(target)
-        self._post_seek(target)
+        self._commit_seek(target)
 
     # ---------- 1 フレーム送り ----------
     def frame_step_ms(self) -> int:
@@ -2578,8 +2497,7 @@ class PlayerWindow(QMainWindow):
         target = min(max(base + self.frame_step_ms() * delta, 0), limit)
         if target == base:
             return False
-        self.seek.setValue(target)
-        self._post_seek(target)
+        self._commit_seek(target)
         return True
 
     @Slot()
@@ -2663,8 +2581,7 @@ class PlayerWindow(QMainWindow):
         a, b = self._ab_a, self._ab_b
         if pos < b or self._pending_seek == a:
             return
-        self.seek.setValue(a)
-        self._post_seek(a)
+        self._commit_seek(a)
 
     # ---------- スクリーンショット ----------
     def _on_video_frame(self, frame) -> None:
@@ -3330,15 +3247,13 @@ class PlayerWindow(QMainWindow):
             # 終了時は先頭に戻して停止表示にする (自動リピートはしない)。
             # player.stop() は使わない (_do_stop と同じ理由)。
             # 世代付き遅延で処理し、直後に別ファイルへ切り替わっていたら破棄する。
-            gen = self._media_gen
-            QTimer.singleShot(0, lambda: self._apply_eos(gen))
+            self._defer_current_media(self._apply_eos)
         elif status == QMediaPlayer.MediaStatus.InvalidMedia:
             if not self._suppress_error_box:
                 self._suppress_error_box = True
-                gen = self._media_gen
-                QTimer.singleShot(
-                    0, lambda g=gen: self._show_deferred_error(
-                        g, "再生エラー", "このファイルは再生できません。対応形式か確認してください。"))
+                self._defer_current_media(
+                    lambda gen: self._show_deferred_error(
+                        gen, "再生エラー", "このファイルは再生できません。対応形式か確認してください。"))
 
     def _apply_eos(self, gen: int) -> None:
         if gen != self._media_gen:
@@ -3381,9 +3296,9 @@ class PlayerWindow(QMainWindow):
         # InvalidMedia と重複表示しない
         if not self._suppress_error_box:
             self._suppress_error_box = True
-            gen = self._media_gen
-            QTimer.singleShot(0, lambda g=gen, m=msg: self._show_deferred_error(
-                g, "再生エラー", f"読み込みに失敗しました:\n{m}"))
+            self._defer_current_media(
+                lambda gen: self._show_deferred_error(
+                    gen, "再生エラー", f"読み込みに失敗しました:\n{m}"))
 
 
 def _run_selftest(argv: list[str]) -> int:

@@ -17,9 +17,9 @@ Ranking = (complexity removed × safety) / churn. Status values: todo, doing, do
 | 11 | Verify `MPLAYER_NO_AUTOUPDATE` env restoration in `p11` | Low | Low | tests | done (already correct) |
 | 12 | Register `p38_atomic_json` next to other p38 stages | Low | Low | tests | done |
 | 13 | Interpolate tuning constants into help prose | Medium | Medium | docs/tests | blocked: product decision |
-| 14 | Generalize deferred-generation helper | Low | Medium | main | todo (later round) |
-| 15 | Consolidate seek commit sequence | Low | Medium | main | todo (later round) |
-| 16 | Extract pure subtitle text helpers | Medium | Medium | main + tests | todo (later round) |
+| 14 | Generalize deferred-generation helper | Low | Medium | main | done |
+| 15 | Consolidate seek commit sequence | Low | Medium | main | done |
+| 16 | Extract pure subtitle text helpers | Medium | Medium | main + tests | done |
 | 17 | Extract pure state validators | Medium | High | main + many tests | todo (later round) |
 | 18 | Split `PlayerWindow` into mixins | Negative | High | whole app | rejected (deletion test) |
 | 19 | Move `__version__` out of `main.py` | Negative | High | build/CI | rejected (deletion test) |

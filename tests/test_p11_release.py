@@ -1,6 +1,7 @@
 """P11: リリース準備 (バージョン表記・CHANGELOG・CIリリース設定) の検証。"""
 import os
 import hashlib
+import inspect
 import re
 import sys
 import io
@@ -16,6 +17,7 @@ from helpers import check, finish, make_app, patch_message_boxes
 
 import main as app_main
 import updater
+import subtitle_text
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -38,6 +40,15 @@ def main():
     check("dead updater helpers removed",
           not hasattr(updater, "take_pending")
           and not hasattr(updater, "PRESERVE_FILES"))
+    check("subtitle text module is authority",
+          app_main.parse_srt is subtitle_text.parse_srt
+          and app_main.decode_subtitle_bytes is subtitle_text.decode_subtitle_bytes
+          and app_main.contrast_outline is subtitle_text.contrast_outline
+          and app_main.SUB_ENCODINGS is subtitle_text.SUB_ENCODINGS)
+    eos_source = inspect.getsource(app_main.PlayerWindow._apply_eos)
+    check("AB EOS does not schedule a deferred seek",
+          "self.seek.setValue(self._ab_a)" in eos_source
+          and "_commit_seek(self._ab_a)" not in eos_source)
     check("updater disabled in tests", updater.enabled() is False)
     old_no_update = os.environ.pop("MPLAYER_NO_AUTOUPDATE", None)
     old_auto = os.environ.get("MPLAYER_AUTOUPDATE")

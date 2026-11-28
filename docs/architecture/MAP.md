@@ -7,17 +7,19 @@ flowchart LR
     main[main.py] --> updater[updater.py]
     main --> state_paths[state_paths.py]
     main --> json_persistence[json_persistence.py]
+    main --> subtitle_text[subtitle_text.py]
     updater --> state_paths
     tests[tests/*] --> main
     tests --> updater
     tests --> json_persistence
+    tests --> subtitle_text
     ci[CI] --> spec[mplayer.spec]
     ci --> maker[tools/make_installer.py]
     ci --> iss[installer/mplayer.iss]
     maker --> main
 ```
 
-No runtime module imports `main`; no cycles. `state_paths` and `json_persistence` are shallow leaves that pass the deletion test because they have real importers.
+No runtime module imports `main`; no cycles. `state_paths`, `json_persistence`, and `subtitle_text` are shallow leaves that pass the deletion test because they have real importers.
 
 ## Authority map
 
@@ -27,10 +29,11 @@ No runtime module imports `main`; no cycles. `state_paths` and `json_persistence
 | State directory | `state_paths.py:7-13` | Env `MPLAYER_STATE_DIR` or `%LOCALAPPDATA%\mplayer`. |
 | State file paths | `main.py:291-296` | Resume/session env overrides; legacy fallback for migration. |
 | Atomic JSON writes | `json_persistence.py:12` | Dead duplicate removed from `main.py`. |
+| Subtitle text | `subtitle_text.py` | SRT parsing, encoding detection, contrast color; re-exported from `main.py` for existing imports. |
 | Update result marker | `updater.py:141-175` + embedded PowerShell | Schema `{ok,from,to,reason,time}`; 600 s freshness. |
 | Release/checksum names | `updater.py:29-30,201-206`, `ci.yml:155-164` | `mplayer-windows-v<tag>.zip` + `.sha256`. |
 | Installer settings | `installer/mplayer.iss` | Per-user, `PrivilegesRequired=lowest`, HKA, 9 extensions. |
-| Help content | `main.py:761-834` | `SHORTCUTS`/`HELP_NOTES`/`HELP_CATEGORIES`; tests import them. |
+| Help content | `main.py:671-755` | `SHORTCUTS`/`HELP_NOTES`/`HELP_CATEGORIES`; tests import them. |
 
 ## Mutable state ownership
 
@@ -40,11 +43,10 @@ No runtime module imports `main`; no cycles. `state_paths` and `json_persistence
 
 ## Duplicate/near-duplicate implementations
 
-1. Deferred generation-guarded callback boilerplate in seek/playback/EOS handlers.
-2. Seek commit sequence `seek.setValue()` + `_post_seek()` repeated in four places.
-3. Metadata formatter family repeats defensive coercion shape (low gain).
-4. Help prose hardcodes tuning constants (user-visible wording — needs product decision).
-5. Round 1 removed: duplicated extension list, duplicate JSON writer, audio enumeration duplication, outline-width formula, dead `PRESERVE_FILES` and `take_pending`.
+1. Metadata formatter family repeats defensive coercion shape (low gain).
+2. Help prose hardcodes tuning constants (user-visible wording — needs product decision).
+3. Round 1 removed: duplicated extension list, duplicate JSON writer, audio enumeration duplication, outline-width formula, dead `PRESERVE_FILES` and `take_pending`.
+4. Round 3 removed: deferred-generation boilerplate, seek commit duplication, subtitle text logic embedded in Qt module.
 
 ## Norm deviations / hazards
 

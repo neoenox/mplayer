@@ -35,3 +35,9 @@ Many tests assert exact strings. Rewording documentation is excluded from entrop
 Status: accepted.
 
 The toast branches on exact Japanese prefixes and tests assert icons/colors. Changing wording changes behavior. Normalize internals only.
+
+## ADR-007: Keep pure subtitle text processing in a Qt-free leaf
+
+Status: accepted.
+
+`subtitle_text.py` owns SRT parsing, encoding detection, and contrast color selection. `main.py` re-exports those names so existing `from main import ...` contracts keep working. Qt widgets and UI labels stay in `main.py`.
