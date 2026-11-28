@@ -14,7 +14,7 @@ from PySide6.QtCore import QEventLoop, QTimer
 from PySide6.QtMultimedia import QAudioBufferOutput, QMediaPlayer, QVideoFrame
 from PySide6.QtWidgets import QApplication, QMessageBox
 
-from tests.helpers import patch_message_boxes, silence  # noqa: E402
+from tests.helpers import check, finish, patch_message_boxes, silence  # noqa: E402
 
 from main import PlayerWindow
 
@@ -22,17 +22,6 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 VIDEO = os.path.join(BASE, "..", "test_640x360.mp4")
 SILENT = os.path.join(BASE, "..", "test_silent.mp4")
 
-passed = failed = 0
-
-
-def check(name, cond, extra=""):
-    global passed, failed
-    if cond:
-        passed += 1
-        print(f"[PASS] {name} {extra}", flush=True)
-    else:
-        failed += 1
-        print(f"[FAIL] {name} {extra}", flush=True)
 
 
 def wait_for(pred, timeout_ms=10000, poll_ms=100):
@@ -207,8 +196,7 @@ def main():
     check("silent: no audio buffers (negative control)", len(audios) == 0,
           f"n={len(audios)}")
 
-    print(f"\n== P0 RESULT: {passed} passed, {failed} failed ==", flush=True)
-    return 1 if failed else 0
+    return finish("P0decode")
 
 
 if __name__ == "__main__":

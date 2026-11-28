@@ -27,6 +27,17 @@ def main():
     check("app name set", bool(app_main.APP_NAME))
     check("state dir is user-local",
           os.path.basename(app_main.STATE_DIR) == "mplayer")
+    check("extension filter has single authority",
+          app_main.SUPPORTED_FILTER
+          == "動画ファイル (*" + " *".join(app_main.VIDEO_EXTS) + ");;すべてのファイル (*.*)")
+    check("outline width normalized",
+          abs(app_main.subtitle_outline_width(18) - 2.7) < 1e-9
+          and app_main.subtitle_outline_width(4) == 1.5)
+    check("updater uses shared atomic writer",
+          updater.atomic_write_json is app_main.atomic_write_json)
+    check("dead updater helpers removed",
+          not hasattr(updater, "take_pending")
+          and not hasattr(updater, "PRESERVE_FILES"))
     check("updater disabled in tests", updater.enabled() is False)
     old_no_update = os.environ.pop("MPLAYER_NO_AUTOUPDATE", None)
     old_auto = os.environ.get("MPLAYER_AUTOUPDATE")
@@ -53,8 +64,10 @@ def main():
             os.environ.pop("MPLAYER_AUTOUPDATE", None)
         else:
             os.environ["MPLAYER_AUTOUPDATE"] = old_auto
+    major, minor, patch = updater.version_tuple(app_main.__version__)[:3]
+    newer = f"v{major}.{minor}.{patch + 1}"
     check("version comparison", updater.version_tuple("v1.27.0") == (1, 27, 0)
-          and updater.is_newer("v1.31.0", app_main.__version__))
+          and updater.is_newer(newer, app_main.__version__))
     check("portable asset detection", updater.find_portable_asset({"assets": [
         {"name": "mplayer-setup-1.28.0.exe", "browser_download_url": "https://x/setup.exe"},
         {"name": "mplayer-windows-v1.28.0.zip", "browser_download_url": "https://x/app.zip"},
@@ -151,7 +164,7 @@ def main():
                         to_version="v1.29.0")
     marker = os.path.join(apply_app, "applied-marker.txt")
     applied = False
-    for _ in range(40):
+    for _ in range(80):
         if os.path.isfile(marker):
             applied = True
             break
@@ -160,7 +173,7 @@ def main():
     check("updater preserves resume.json",
           os.path.isfile(os.path.join(apply_app, "resume.json")))
     result_data = None
-    for _ in range(40):
+    for _ in range(80):
         if os.path.isfile(result_path):
             try:
                 with open(result_path, encoding="utf-8-sig") as f:

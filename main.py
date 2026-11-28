@@ -18,7 +18,6 @@ import os
 import random
 import re
 import sys
-import tempfile
 import time
 import updater
 
@@ -72,12 +71,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+# ドロップ/フォルダ走査で扱う拡張子とファイルダイアログのフィルタ (この順が公式)。
+VIDEO_EXTS = (".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v", ".mpg", ".mpeg", ".wmv")
 SUPPORTED_FILTER = (
-    "動画ファイル (*.mp4 *.mkv *.avi *.mov *.webm *.m4v *.mpg *.mpeg *.wmv);;すべてのファイル (*.*)"
+    "動画ファイル (*" + " *".join(VIDEO_EXTS) + ");;すべてのファイル (*.*)"
 )
-
-# ドロップ/フォルダ走査で扱う拡張子 (小文字で比較)。
-VIDEO_EXTS = {".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v", ".mpg", ".mpeg", ".wmv"}
 SUBTITLE_EXTS = {".srt"}
 # フォルダをドロップした時に収集する最大件数 (巨大フォルダ対策)。
 DROP_MAX_FILES = 500
@@ -447,24 +445,6 @@ def format_ms(ms: int) -> str:
     return f"{m:02d}:{s:02d}"
 
 
-def _write_json_atomic(path: str, data, **kwargs) -> None:
-    """JSON を一時ファイル経由で書き換える (途中終了で壊れないように)。"""
-    directory = os.path.dirname(os.path.abspath(path)) or "."
-    os.makedirs(directory, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(prefix=".mplayer-", suffix=".json", dir=directory)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(data, f, **kwargs)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, path)
-    except Exception:
-        try:
-            os.remove(tmp)
-        except OSError:
-            pass
-        raise
-
 
 # ---------- 1 フレーム送り ----------
 FRAME_STEP_FALLBACK_MS = 33  # fps が取れないときの 1 フレーム (約 30fps)
@@ -653,6 +633,11 @@ def contrast_outline(rgb) -> tuple[int, int, int]:
     r, g, b = (int(v) for v in rgb)
     lum = 0.299 * r + 0.587 * g + 0.114 * b
     return (0, 0, 0) if lum >= 128 else (255, 255, 255)
+
+
+def subtitle_outline_width(size: int) -> float:
+    """文字サイズに追従する字幕の縁取り幅。"""
+    return max(1.5, size * 0.15)
 
 
 class SubtitleLabel(QLabel):
@@ -2032,7 +2017,7 @@ class PlayerWindow(QMainWindow):
         self.subtitle_label.set_fill_color(self._sub_color)
         # 縁取り幅は文字サイズに追従させる (大きい文字ほど太く)。
         self.subtitle_label.set_outline(self._sub_outline,
-                                        max(1.5, self._sub_size * 0.15))
+                                        subtitle_outline_width(self._sub_size))
         self.subtitle_label.set_bg_enabled(self._sub_bg)
 
     def set_subtitle_size(self, px: int) -> None:
@@ -2051,7 +2036,7 @@ class PlayerWindow(QMainWindow):
         if act is not None and act.isChecked() != self._sub_outline:
             act.setChecked(self._sub_outline)
         self.subtitle_label.set_outline(
-            self._sub_outline, max(1.5, self._sub_size * 0.15))
+            self._sub_outline, subtitle_outline_width(self._sub_size))
 
     def set_subtitle_bg(self, enabled: bool) -> None:
         self._sub_bg = bool(enabled)
@@ -2990,6 +2975,14 @@ class PlayerWindow(QMainWindow):
         self.speed_btn.setText(f"速度 {rate}x")
 
     # ---------- 音声出力先 ----------
+    def _enumerate_audio_devices(self) -> dict[str, QAudioDevice]:
+        """利用中の音声出力先を ID -> デバイスで返す。"""
+        return {
+            key: device
+            for device in QMediaDevices.audioOutputs()
+            if not device.isNull() and (key := audio_device_key(device))
+        }
+
     def _refresh_audio_device_menu(self) -> None:
         menu = self._audio_device_menu
         if menu is None:
@@ -2997,11 +2990,7 @@ class PlayerWindow(QMainWindow):
         for act in list(self._audio_device_group.actions()):
             self._audio_device_group.removeAction(act)
         menu.clear()
-        self._audio_devices = {
-            key: device
-            for device in QMediaDevices.audioOutputs()
-            if not device.isNull() and (key := audio_device_key(device))
-        }
+        self._audio_devices = self._enumerate_audio_devices()
         # OS によって列挙順が違うため、説明順に並べる。
         devices = sorted(
             self._audio_devices.items(), key=lambda item: item[1].description())
@@ -3026,11 +3015,7 @@ class PlayerWindow(QMainWindow):
     def _on_audio_outputs_changed(self) -> None:
         # 選択中のデバイスが抜けたら既定へ戻す (消えた出力先へ送り続けない)。
         if self._audio_device_key:
-            devices = {
-                audio_device_key(d) for d in QMediaDevices.audioOutputs()
-                if not d.isNull()
-            }
-            if self._audio_device_key not in devices:
+            if self._audio_device_key not in self._enumerate_audio_devices():
                 self._audio_device_key = ""
                 self.audio.setDevice(QAudioDevice())
         self._refresh_audio_device_menu()

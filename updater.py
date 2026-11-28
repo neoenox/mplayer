@@ -24,10 +24,11 @@ import urllib.request
 import zipfile
 
 from state_paths import state_dir
+from json_persistence import atomic_write_json
+
 RELEASES_API = "https://api.github.com/repos/neoenox/mplayer/releases/latest"
 ASSET_RE = re.compile(r"mplayer-windows-v?[^/\\]+\.zip$", re.IGNORECASE)
 LOG_NAME = "mplayer_autoupdate.log"
-PRESERVE_FILES = ("resume.json", "session.json")
 RESULT_MAX_AGE_SEC = 600
 _TIMEOUT_CHECK = 8
 _TIMEOUT_DOWNLOAD = 120
@@ -145,11 +146,10 @@ def record_update_result(ok: bool, from_version: str = "", to_version: str = "",
                          reason: str = "") -> None:
     """次回起動に見せる更新結果を残す (成功・失敗どちらも)。"""
     path = update_result_path()
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump({"ok": bool(ok), "from": from_version, "to": to_version,
-                   "reason": reason, "time": time.strftime("%Y-%m-%dT%H:%M:%S")},
-                  f, ensure_ascii=False)
+    atomic_write_json(path, {"ok": bool(ok), "from": from_version, "to": to_version,
+                             "reason": reason,
+                             "time": time.strftime("%Y-%m-%dT%H:%M:%S")},
+                      ensure_ascii=False)
 
 
 def consume_update_result() -> dict | None:
@@ -345,12 +345,6 @@ def start_background_check(app_dir: str, current_version: str) -> None:
             clear_status()
 
     threading.Thread(target=worker, name="mplayer-updater", daemon=True).start()
-
-
-def take_pending() -> str | None:
-    with _LOCK:
-        stage, _PENDING[0] = _PENDING[0], None
-        return stage
 
 
 def pending_update_info() -> tuple[str | None, str, str]:
