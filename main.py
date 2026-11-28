@@ -16,13 +16,13 @@ import json
 import logging
 import os
 import random
-import re
 import sys
-import tempfile
 import time
 import updater
 
 from json_persistence import atomic_write_json
+from state_paths import state_dir as _state_dir
+from subtitle_text import SUB_ENCODINGS, contrast_outline, decode_subtitle_bytes, parse_srt
 
 from PySide6.QtCore import QEvent, QPointF, Qt, QTimer, QUrl, Slot
 from PySide6.QtGui import (
@@ -71,12 +71,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+# ドロップ/フォルダ走査で扱う拡張子とファイルダイアログのフィルタ (この順が公式)。
+VIDEO_EXTS = (".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v", ".mpg", ".mpeg", ".wmv")
 SUPPORTED_FILTER = (
-    "動画ファイル (*.mp4 *.mkv *.avi *.mov *.webm *.m4v *.mpg *.mpeg *.wmv);;すべてのファイル (*.*)"
+    "動画ファイル (*" + " *".join(VIDEO_EXTS) + ");;すべてのファイル (*.*)"
 )
-
-# ドロップ/フォルダ走査で扱う拡張子 (小文字で比較)。
-VIDEO_EXTS = {".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v", ".mpg", ".mpeg", ".wmv"}
 SUBTITLE_EXTS = {".srt"}
 # フォルダをドロップした時に収集する最大件数 (巨大フォルダ対策)。
 DROP_MAX_FILES = 500
@@ -111,6 +110,13 @@ def audio_device_key(device: QAudioDevice) -> str:
     return bytes(device.id()).hex()
 
 
+def trim_oldest(mapping: dict, limit: int) -> dict:
+    """上限を超えた分を挿入順の古い方から削除する。"""
+    while len(mapping) > limit:
+        mapping.pop(next(iter(mapping)))
+    return mapping
+
+
 def sanitize_sub_delay_map(value, limit=SUB_DELAY_MAX_ENTRIES) -> dict[str, int]:
     """保存された「ファイル単位の字幕遅延」を検証し、使える分だけ返す。
 
@@ -125,8 +131,7 @@ def sanitize_sub_delay_map(value, limit=SUB_DELAY_MAX_ENTRIES) -> dict[str, int]
     for path, ms in value.items():
         if isinstance(path, str) and isinstance(ms, int) and not isinstance(ms, bool):
             out[recent_key(path)] = clamp_sub_delay(ms)
-    while len(out) > limit:
-        out.pop(next(iter(out)))
+    trim_oldest(out, limit)
     return out
 
 
@@ -143,8 +148,7 @@ def remember_sub_delay(mapping, path, ms: int,
     out.pop(path, None)
     if ms:
         out[path] = clamp_sub_delay(ms)
-    while len(out) > limit:
-        out.pop(next(iter(out)))
+    trim_oldest(out, limit)
     return out
 
 
@@ -283,10 +287,7 @@ def _resource_path(rel: str) -> str:
 ICON_PATH = _resource_path(os.path.join("assets", "app.ico"))
 
 # 状態ファイルはユーザー領域に置く (Program Files 配下でも書き込めるように)。
-STATE_DIR = os.environ.get(
-    "MPLAYER_STATE_DIR",
-    os.path.join(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"), "mplayer"),
-)
+STATE_DIR = _state_dir()
 LEGACY_STATE_DIR = os.path.dirname(os.path.abspath(__file__))
 RESUME_EXPLICIT = "MPLAYER_RESUME_FILE" in os.environ
 SESSION_EXPLICIT = "MPLAYER_SESSION_FILE" in os.environ
@@ -444,24 +445,6 @@ def format_ms(ms: int) -> str:
     return f"{m:02d}:{s:02d}"
 
 
-def _write_json_atomic(path: str, data, **kwargs) -> None:
-    """JSON を一時ファイル経由で書き換える (途中終了で壊れないように)。"""
-    directory = os.path.dirname(os.path.abspath(path)) or "."
-    os.makedirs(directory, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(prefix=".mplayer-", suffix=".json", dir=directory)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(data, f, **kwargs)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, path)
-    except Exception:
-        try:
-            os.remove(tmp)
-        except OSError:
-            pass
-        raise
-
 
 # ---------- 1 フレーム送り ----------
 FRAME_STEP_FALLBACK_MS = 33  # fps が取れないときの 1 フレーム (約 30fps)
@@ -540,93 +523,9 @@ META_ROWS = [
 ]
 
 
-def _parse_srt_timestamp(text: str) -> int:
-    """'00:00:01,500' / '00:01:02.250' / '01:02' をミリ秒に変換する。"""
-    t = text.strip().replace(",", ".")
-    parts = t.split(":")
-    if len(parts) == 3:
-        h, m, sec = parts
-    elif len(parts) == 2:
-        h, (m, sec) = 0, parts
-    else:
-        raise ValueError(f"bad timestamp: {text!r}")
-    return int(h) * 3600000 + int(m) * 60000 + int(round(float(sec) * 1000))
 
 
-def _is_srt_timestamp_line(line: str) -> bool:
-    """SRT のタイムスタンプ行かどうか (本文の矢印と区別する)。"""
-    return "-->" in line and bool(re.search(r"\d{1,2}:\d{2}", line))
-
-
-def parse_srt(text: str) -> list[tuple[int, int, str]]:
-    """SRT文字列を (開始ms, 終了ms, 本文) のリストに変換する。
-
-    空行区切りが無い SRT も扱える。不正なブロックは黙って読み飛ばす。
-    """
-    normalized = text.replace("\r\n", "\n").replace("\r", "\n").lstrip("\ufeff")
-    lines = normalized.split("\n")
-    cues: list[tuple[int, int, str]] = []
-    i = 0
-    while i < len(lines):
-        if not _is_srt_timestamp_line(lines[i]):
-            i += 1
-            continue
-        left, _, right = lines[i].partition("-->")
-        try:
-            start = _parse_srt_timestamp(left)
-            # 末尾に座標等が付く形式 ("... --> 00:00:02,000 X1:..") を許容
-            end = _parse_srt_timestamp(right.strip().split()[0])
-        except Exception:
-            i += 1
-            continue
-        body_lines: list[str] = []
-        i += 1
-        while i < len(lines) and not _is_srt_timestamp_line(lines[i]):
-            stripped = lines[i].strip()
-            # 次のcueの番号行は本文に含めない
-            if (stripped.isdigit() and i + 1 < len(lines)
-                    and _is_srt_timestamp_line(lines[i + 1])):
-                break
-            body_lines.append(lines[i])
-            i += 1
-        body = "\n".join(body_lines).strip()
-        if body:
-            cues.append((start, end, body))
-    cues.sort(key=lambda c: c[0])
-    return cues
-
-
-# 字幕の文字コード選択肢。auto は BOM/UTF-8/CP932 を順に試す。
-SUB_ENCODINGS = ("auto", "utf-8", "cp932")
 _ENCODING_LABELS = {"auto": "自動", "utf-8": "UTF-8", "cp932": "Shift_JIS"}
-
-
-def decode_subtitle_bytes(data: bytes, encoding: str = "auto") -> tuple[str, str]:
-    """字幕のバイト列をテキストへ復号する。(本文, 採用した文字コード) を返す。
-
-    日本語 SRT は UTF-8 と Shift_JIS(CP932) が混在するため、
-    encoding="auto" では BOM → UTF-8(厳密) → CP932 の順に判定する。
-    明示指定が失敗した場合も自動判定へフォールバックする (化けより安全)。
-    """
-    if encoding in ("utf-8", "cp932"):
-        try:
-            return data.decode(encoding), encoding
-        except (UnicodeDecodeError, LookupError):
-            pass
-
-    if data.startswith(b"\xef\xbb\xbf"):
-        return data.decode("utf-8-sig", errors="replace"), "utf-8"
-    if data.startswith((b"\xff\xfe", b"\xfe\xff")):
-        return data.decode("utf-16", errors="replace"), "utf-16"
-
-    for enc in ("utf-8", "cp932"):
-        try:
-            return data.decode(enc), enc
-        except UnicodeDecodeError:
-            continue
-    return data.decode("utf-8", errors="replace"), "utf-8"
-
-
 # 字幕の配色とフォント。縁取り色は塗り色の輝度から自動で決める (黒地に黒を防ぐ)。
 SUB_COLORS = (
     ("白", (255, 255, 255)),
@@ -645,11 +544,11 @@ SUB_FONTS = (
 )
 
 
-def contrast_outline(rgb) -> tuple[int, int, int]:
-    """塗り色の輝度から縁取り色 (黒 or 白) を選ぶ。"""
-    r, g, b = (int(v) for v in rgb)
-    lum = 0.299 * r + 0.587 * g + 0.114 * b
-    return (0, 0, 0) if lum >= 128 else (255, 255, 255)
+
+
+def subtitle_outline_width(size: int) -> float:
+    """文字サイズに追従する字幕の縁取り幅。"""
+    return max(1.5, size * 0.15)
 
 
 class SubtitleLabel(QLabel):
@@ -1697,8 +1596,7 @@ class PlayerWindow(QMainWindow):
 
     def _save_resume(self) -> None:
         try:
-            while len(self._resume) > RESUME_MAX_ENTRIES:
-                self._resume.pop(next(iter(self._resume)))
+            trim_oldest(self._resume, RESUME_MAX_ENTRIES)
             atomic_write_json(RESUME_FILE, self._resume, ensure_ascii=False)
         except Exception:
             logging.getLogger(__name__).exception(
@@ -2030,7 +1928,7 @@ class PlayerWindow(QMainWindow):
         self.subtitle_label.set_fill_color(self._sub_color)
         # 縁取り幅は文字サイズに追従させる (大きい文字ほど太く)。
         self.subtitle_label.set_outline(self._sub_outline,
-                                        max(1.5, self._sub_size * 0.15))
+                                        subtitle_outline_width(self._sub_size))
         self.subtitle_label.set_bg_enabled(self._sub_bg)
 
     def set_subtitle_size(self, px: int) -> None:
@@ -2049,7 +1947,7 @@ class PlayerWindow(QMainWindow):
         if act is not None and act.isChecked() != self._sub_outline:
             act.setChecked(self._sub_outline)
         self.subtitle_label.set_outline(
-            self._sub_outline, max(1.5, self._sub_size * 0.15))
+            self._sub_outline, subtitle_outline_width(self._sub_size))
 
     def set_subtitle_bg(self, enabled: bool) -> None:
         self._sub_bg = bool(enabled)
@@ -2494,8 +2392,7 @@ class PlayerWindow(QMainWindow):
     @Slot()
     def stop(self) -> None:
         # 状態遷移はイベント処理の外で実行 (入力ディスパッチ内の再入デッドロック防止)。
-        gen = self._media_gen
-        QTimer.singleShot(0, lambda: self._apply_stop(gen))
+        self._defer_current_media(self._apply_stop)
 
     def _apply_stop(self, gen: int) -> None:
         if gen == self._media_gen:
@@ -2542,10 +2439,20 @@ class PlayerWindow(QMainWindow):
         except Exception:
             pass
 
-    def _post_seek(self, target: int) -> None:
+
+    def _defer_current_media(self, callback) -> None:
+        """現在のメディア世代に紐づけて次のイベントで実行する。"""
         gen = self._media_gen
+        QTimer.singleShot(0, lambda: callback(gen))
+
+    def _commit_seek(self, target: int) -> None:
+        """シークバー表示と実際のシーク要求を同時に更新する。"""
+        self.seek.setValue(target)
+        self._post_seek(target)
+
+    def _post_seek(self, target: int) -> None:
         self._pending_seek = target
-        QTimer.singleShot(0, lambda: self._apply_seek(gen, target))
+        self._defer_current_media(lambda gen: self._apply_seek(gen, target))
 
     def seek_by(self, delta_ms: int) -> None:
         """キーボード用相対シーク。範囲外は丸め、安全な遅延経路を使う。
@@ -2554,8 +2461,7 @@ class PlayerWindow(QMainWindow):
             return
         base = self._pending_seek if self._pending_seek is not None else self.player.position()
         target = min(max(base + delta_ms, 0), self.player.duration())
-        self.seek.setValue(target)
-        self._post_seek(target)
+        self._commit_seek(target)
 
     # ---------- 1 フレーム送り ----------
     def frame_step_ms(self) -> int:
@@ -2591,8 +2497,7 @@ class PlayerWindow(QMainWindow):
         target = min(max(base + self.frame_step_ms() * delta, 0), limit)
         if target == base:
             return False
-        self.seek.setValue(target)
-        self._post_seek(target)
+        self._commit_seek(target)
         return True
 
     @Slot()
@@ -2676,8 +2581,7 @@ class PlayerWindow(QMainWindow):
         a, b = self._ab_a, self._ab_b
         if pos < b or self._pending_seek == a:
             return
-        self.seek.setValue(a)
-        self._post_seek(a)
+        self._commit_seek(a)
 
     # ---------- スクリーンショット ----------
     def _on_video_frame(self, frame) -> None:
@@ -2988,6 +2892,14 @@ class PlayerWindow(QMainWindow):
         self.speed_btn.setText(f"速度 {rate}x")
 
     # ---------- 音声出力先 ----------
+    def _enumerate_audio_devices(self) -> dict[str, QAudioDevice]:
+        """利用中の音声出力先を ID -> デバイスで返す。"""
+        return {
+            key: device
+            for device in QMediaDevices.audioOutputs()
+            if not device.isNull() and (key := audio_device_key(device))
+        }
+
     def _refresh_audio_device_menu(self) -> None:
         menu = self._audio_device_menu
         if menu is None:
@@ -2995,11 +2907,7 @@ class PlayerWindow(QMainWindow):
         for act in list(self._audio_device_group.actions()):
             self._audio_device_group.removeAction(act)
         menu.clear()
-        self._audio_devices = {
-            key: device
-            for device in QMediaDevices.audioOutputs()
-            if not device.isNull() and (key := audio_device_key(device))
-        }
+        self._audio_devices = self._enumerate_audio_devices()
         # OS によって列挙順が違うため、説明順に並べる。
         devices = sorted(
             self._audio_devices.items(), key=lambda item: item[1].description())
@@ -3024,11 +2932,7 @@ class PlayerWindow(QMainWindow):
     def _on_audio_outputs_changed(self) -> None:
         # 選択中のデバイスが抜けたら既定へ戻す (消えた出力先へ送り続けない)。
         if self._audio_device_key:
-            devices = {
-                audio_device_key(d) for d in QMediaDevices.audioOutputs()
-                if not d.isNull()
-            }
-            if self._audio_device_key not in devices:
+            if self._audio_device_key not in self._enumerate_audio_devices():
                 self._audio_device_key = ""
                 self.audio.setDevice(QAudioDevice())
         self._refresh_audio_device_menu()
@@ -3281,16 +3185,11 @@ class PlayerWindow(QMainWindow):
 
         # 複数 (フォルダ展開含む) はプレイリストに追加し、先頭を再生する。
         self.add_to_playlist(videos)
-        row = self._row_of_path(os.path.abspath(videos[0]))
-        if row >= 0:
+        row = self._row_of(os.path.abspath(videos[0]))
+        if row is not None:
             self.play_index(row)
         event.acceptProposedAction()
 
-    def _row_of_path(self, path: str) -> int:
-        for i in range(self.playlist.count()):
-            if self.playlist.item(i).data(Qt.ItemDataRole.UserRole) == path:
-                return i
-        return -1
 
     # ---------- 再生状態反映 ----------
 
@@ -3348,15 +3247,13 @@ class PlayerWindow(QMainWindow):
             # 終了時は先頭に戻して停止表示にする (自動リピートはしない)。
             # player.stop() は使わない (_do_stop と同じ理由)。
             # 世代付き遅延で処理し、直後に別ファイルへ切り替わっていたら破棄する。
-            gen = self._media_gen
-            QTimer.singleShot(0, lambda: self._apply_eos(gen))
+            self._defer_current_media(self._apply_eos)
         elif status == QMediaPlayer.MediaStatus.InvalidMedia:
             if not self._suppress_error_box:
                 self._suppress_error_box = True
-                gen = self._media_gen
-                QTimer.singleShot(
-                    0, lambda g=gen: self._show_deferred_error(
-                        g, "再生エラー", "このファイルは再生できません。対応形式か確認してください。"))
+                self._defer_current_media(
+                    lambda gen: self._show_deferred_error(
+                        gen, "再生エラー", "このファイルは再生できません。対応形式か確認してください。"))
 
     def _apply_eos(self, gen: int) -> None:
         if gen != self._media_gen:
@@ -3399,9 +3296,9 @@ class PlayerWindow(QMainWindow):
         # InvalidMedia と重複表示しない
         if not self._suppress_error_box:
             self._suppress_error_box = True
-            gen = self._media_gen
-            QTimer.singleShot(0, lambda g=gen, m=msg: self._show_deferred_error(
-                g, "再生エラー", f"読み込みに失敗しました:\n{m}"))
+            self._defer_current_media(
+                lambda gen: self._show_deferred_error(
+                    gen, "再生エラー", f"読み込みに失敗しました:\n{m}"))
 
 
 def _run_selftest(argv: list[str]) -> int:

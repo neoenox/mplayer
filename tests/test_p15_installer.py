@@ -42,22 +42,23 @@ def main():
     check("associations are unconditional",
           "Tasks: associations" not in text and 'Name: "associations"' not in text)
 
-    setups = sorted(glob.glob(os.path.join(BASE, "dist", "installer",
-                                           "mplayer-setup-*.exe")))
-    if not setups:
+    expected = f"mplayer-setup-{app_main.__version__}.exe"
+    all_setups = glob.glob(os.path.join(BASE, "dist", "installer",
+                                        "mplayer-setup-*.exe"))
+    setups = [p for p in all_setups if os.path.basename(p) == expected]
+    if not all_setups:
         skip("setup exe present", "(未ビルド: make_installer.py を実行)")
+    elif not setups:
+        check("setup filename matches version", False,
+              f"available={[os.path.basename(p) for p in all_setups]}")
     else:
-        setup = setups[-1]
+        setup = setups[0]
         size = os.path.getsize(setup)
         check("setup size > 10MB", size > 10 * 1024 * 1024, f"{size} bytes")
         with open(setup, "rb") as f:
             magic = f.read(2)
         check("setup has MZ signature", magic == b"MZ", f"{magic!r}")
 
-        name = os.path.basename(setup)
-        expected = f"mplayer-setup-{app_main.__version__}.exe"
-        check("setup filename matches version", name == expected,
-              f"{name} (version {app_main.__version__})")
 
         import ctypes
         from ctypes import wintypes

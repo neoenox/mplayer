@@ -61,9 +61,9 @@ STAGES = [
     ("p35_window_state", "tests/test_p35_window_state.py", 180),
     ("p36_recent_files", "tests/test_p36_recent_files.py", 180),
     ("p37_subtitle_delay_files", "tests/test_p37_subtitle_delay_files.py", 180),
+    ("p38_atomic_json", "tests/test_p38_atomic_json.py", 60),
     ("p38_audio_device", "tests/test_p38_audio_device.py", 90),
     ("p39_ui_layout", "tests/test_p39_ui_layout.py", 90),
-    ("p38_atomic_json", "tests/test_p38_atomic_json.py", 60),
 ]
 
 

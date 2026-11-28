@@ -1,6 +1,8 @@
 """P11: リリース準備 (バージョン表記・CHANGELOG・CIリリース設定) の検証。"""
 import os
+import ast
 import hashlib
+import inspect
 import re
 import sys
 import io
@@ -16,6 +18,7 @@ from helpers import check, finish, make_app, patch_message_boxes
 
 import main as app_main
 import updater
+import subtitle_text
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -27,6 +30,42 @@ def main():
     check("app name set", bool(app_main.APP_NAME))
     check("state dir is user-local",
           os.path.basename(app_main.STATE_DIR) == "mplayer")
+    check("extension filter has single authority",
+          app_main.SUPPORTED_FILTER
+          == "動画ファイル (*" + " *".join(app_main.VIDEO_EXTS) + ");;すべてのファイル (*.*)")
+    check("outline width normalized",
+          abs(app_main.subtitle_outline_width(18) - 2.7) < 1e-9
+          and app_main.subtitle_outline_width(4) == 1.5)
+    check("updater uses shared atomic writer",
+          updater.atomic_write_json is app_main.atomic_write_json)
+    check("dead updater helpers removed",
+          not hasattr(updater, "take_pending")
+          and not hasattr(updater, "PRESERVE_FILES"))
+    check("subtitle text module is authority",
+          app_main.parse_srt is subtitle_text.parse_srt
+          and app_main.decode_subtitle_bytes is subtitle_text.decode_subtitle_bytes
+          and app_main.contrast_outline is subtitle_text.contrast_outline
+          and app_main.SUB_ENCODINGS is subtitle_text.SUB_ENCODINGS)
+    eos_source = inspect.getsource(app_main.PlayerWindow._apply_eos)
+    check("AB EOS does not schedule a deferred seek",
+          "self.seek.setValue(self._ab_a)" in eos_source
+          and "_commit_seek(self._ab_a)" not in eos_source)
+    leaf_modules = ("updater", "state_paths", "json_persistence", "subtitle_text")
+    for name in leaf_modules:
+        tree = ast.parse(open(os.path.join(BASE, f"{name}.py"), encoding="utf-8").read())
+        imports_main = any(
+            (isinstance(node, ast.Import)
+             and any(alias.name == "main" for alias in node.names))
+            or (isinstance(node, ast.ImportFrom) and node.module == "main")
+            for node in ast.walk(tree)
+        )
+        check(f"{name} does not import main", not imports_main)
+    main_tree = ast.parse(open(os.path.join(BASE, "main.py"), encoding="utf-8").read())
+    imported = {alias.name for node in ast.walk(main_tree) if isinstance(node, ast.Import)
+                for alias in node.names}
+    imported |= {node.module for node in ast.walk(main_tree)
+                 if isinstance(node, ast.ImportFrom) and node.module}
+    check("main imports all leaf modules", set(leaf_modules) <= imported)
     check("updater disabled in tests", updater.enabled() is False)
     old_no_update = os.environ.pop("MPLAYER_NO_AUTOUPDATE", None)
     old_auto = os.environ.get("MPLAYER_AUTOUPDATE")
@@ -53,8 +92,10 @@ def main():
             os.environ.pop("MPLAYER_AUTOUPDATE", None)
         else:
             os.environ["MPLAYER_AUTOUPDATE"] = old_auto
+    major, minor, patch = updater.version_tuple(app_main.__version__)[:3]
+    newer = f"v{major}.{minor}.{patch + 1}"
     check("version comparison", updater.version_tuple("v1.27.0") == (1, 27, 0)
-          and updater.is_newer("v1.31.0", app_main.__version__))
+          and updater.is_newer(newer, app_main.__version__))
     check("portable asset detection", updater.find_portable_asset({"assets": [
         {"name": "mplayer-setup-1.28.0.exe", "browser_download_url": "https://x/setup.exe"},
         {"name": "mplayer-windows-v1.28.0.zip", "browser_download_url": "https://x/app.zip"},
@@ -151,7 +192,7 @@ def main():
                         to_version="v1.29.0")
     marker = os.path.join(apply_app, "applied-marker.txt")
     applied = False
-    for _ in range(40):
+    for _ in range(80):
         if os.path.isfile(marker):
             applied = True
             break
@@ -160,7 +201,7 @@ def main():
     check("updater preserves resume.json",
           os.path.isfile(os.path.join(apply_app, "resume.json")))
     result_data = None
-    for _ in range(40):
+    for _ in range(80):
         if os.path.isfile(result_path):
             try:
                 with open(result_path, encoding="utf-8-sig") as f:

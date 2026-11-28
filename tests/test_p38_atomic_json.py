@@ -148,7 +148,7 @@ def main() -> int:
         any("Failed to save session state" in message for message in messages),
     )
 
-    return finish("P38")
+    return finish("P38atomic_json")
 
 
 if __name__ == "__main__":
